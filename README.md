@@ -1,0 +1,136 @@
+# Spell Runtime v1
+
+Minimal CLI runtime for SpellBundle v1.
+
+## Setup
+
+- Node.js >= 20
+- npm
+
+```bash
+npm i
+npm run build
+npm test
+```
+
+Local dev:
+
+```bash
+npm run dev -- --help
+```
+
+## Install as CLI
+
+Global install:
+
+```bash
+npm i -g spell-runtime
+spell --help
+```
+
+Run with npx:
+
+```bash
+npx --yes --package spell-runtime spell --help
+```
+
+Local package smoke checks:
+
+```bash
+npm run smoke:link
+npm run smoke:npx
+```
+
+## Commands
+
+- `spell install <local-path>`
+- `spell list`
+- `spell inspect <id> [--version x.y.z]`
+- `spell cast <id> [--version x.y.z] [-p key=value ...] [--input input.json] [--dry-run] [--yes] [--allow-billing] [--verbose] [--profile <name>]`
+- `spell log <execution-id>`
+
+## Storage Layout
+
+- Spells: `~/.spell/spells/<id_key>/<version>/`
+- ID index: `~/.spell/spells/<id_key>/spell.id.txt`
+- Logs: `~/.spell/logs/<timestamp>_<id>_<version>.json`
+
+`id_key` is fixed as `base64url(utf8(id))`.
+
+- `id` is the logical identifier (display, package identity).
+- `id_key` is only for safe filesystem storage.
+
+Consistency rule:
+
+- `install` checks `spell.yaml` id against `spell.id.txt` when `spell.id.txt` already exists.
+- mismatch is treated as an error.
+
+## Cast Preflight
+
+`cast` performs these checks before execution:
+
+- bundle resolution by id (and optional version)
+- input assembly (`--input` + `-p` overrides)
+- JSON Schema validation by Ajv
+- platform guard
+- risk guard (`high`/`critical` requires `--yes`)
+- billing guard (`billing.enabled` requires `--allow-billing`)
+- connector token guard (`CONNECTOR_<NAME>_TOKEN`)
+- execution summary output
+
+If `--dry-run` is set, command exits after summary and validation.
+
+## Runtime Model
+
+v1 supports host execution only.
+
+- host: steps run in order, shell/http supported.
+- docker: explicitly unsupported in v1 and fails with a clear error.
+
+Future docker direction:
+
+- docker image contains `spell-runner` and executes bundle in container.
+
+## Windows Policy
+
+- host mode does not assume bash/sh.
+- shell step expects executable files (`.js`/`.exe`/`.cmd`/`.ps1` etc).
+- process spawn uses `shell=false`.
+- for strict cross-OS reproducibility, docker mode is the long-term recommended path.
+
+## Effects Vocabulary (Recommended)
+
+Use these `effect.type` words where possible:
+
+- `create`
+- `update`
+- `delete`
+- `deploy`
+- `notify`
+
+## v1 Limitations (Intentionally Not Implemented)
+
+- name search or ambiguous resolution (id only)
+- registry/marketplace/signature enforcement/license verification
+- real billing execution (Stripe)
+- DAG/parallel/rollback/self-healing
+- advanced templating language (only `{{INPUT.*}}` and `{{ENV.*}}`)
+- docker step execution runtime
+
+## Example Flow
+
+```bash
+spell install ./fixtures/spells/hello-host
+spell list
+spell inspect fixtures/hello-host
+spell cast fixtures/hello-host --dry-run -p name=world
+spell cast fixtures/hello-host -p name=world
+spell log <execution-id>
+```
+
+## UI Connection Spec
+
+- Decision-complete button integration spec:
+  - `/Users/koichinishizuka/spell-runtime/docs/ui-connection-spec-v1.md`
+- Sample button registry:
+  - `/Users/koichinishizuka/spell-runtime/examples/button-registry.v1.json`

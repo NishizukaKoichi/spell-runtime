@@ -116,3 +116,11 @@ Use these effect.type words where possible:
   /Users/koichinishizuka/spell-runtime/docs/ui-connection-spec-v1.md
 - Sample button registry:
   /Users/koichinishizuka/spell-runtime/examples/button-registry.v1.json
+
+11. Install from npm
+Global install:
+  npm i -g spell-runtime
+  spell --help
+
+Run with npx:
+  npx --yes --package spell-runtime spell --help
