@@ -1,0 +1,10 @@
+{
+  "method": "POST",
+  "url": "https://api.example.test/v1/deploy/{{INPUT.project}}",
+  "headers": {
+    "x-test-header": "{{ENV.TEST_HEADER}}"
+  },
+  "body": {
+    "project": "{{INPUT.project}}"
+  }
+}

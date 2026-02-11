@@ -1,0 +1,40 @@
+id: fixtures/http-step
+version: 1.0.0
+name: HTTP Step
+summary: http step 実行確認
+inputs_schema: ./schema.json
+risk: low
+permissions: []
+effects:
+  - type: deploy
+    target: api
+    mutates: true
+billing:
+  enabled: false
+  mode: none
+  currency: USD
+  max_amount: 0
+runtime:
+  execution: host
+  platforms:
+    - darwin/arm64
+    - darwin/x64
+    - linux/amd64
+    - linux/arm64
+    - win32/x64
+steps:
+  - uses: http
+    name: request
+    run: steps/request.json
+checks:
+  - type: exit_code
+    params: {}
+  - type: http_status
+    params:
+      expect: 200
+      url_from_output: step.request.json.health_url
+  - type: jsonpath_equals
+    params:
+      from_output: step.request.json
+      path: data.id
+      expected: abc123

@@ -1,0 +1,31 @@
+id: fixtures/billing-guard
+version: 1.0.0
+name: Billing Guard
+summary: billing ガード確認
+inputs_schema: ./schema.json
+risk: low
+permissions: []
+effects:
+  - type: deploy
+    target: remote
+    mutates: true
+billing:
+  enabled: true
+  mode: on_success
+  currency: USD
+  max_amount: 10
+runtime:
+  execution: host
+  platforms:
+    - darwin/arm64
+    - darwin/x64
+    - linux/amd64
+    - linux/arm64
+    - win32/x64
+steps:
+  - uses: shell
+    name: noop
+    run: steps/noop.js
+checks:
+  - type: exit_code
+    params: {}
