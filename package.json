@@ -4,6 +4,11 @@
   "description": "Minimal CLI runtime for SpellBundle v1",
   "license": "MIT",
   "type": "commonjs",
+  "files": [
+    "dist",
+    "README.txt",
+    "LICENSE"
+  ],
   "bin": {
     "spell": "dist/cli/index.js"
   },
@@ -13,8 +18,11 @@
   "scripts": {
     "dev": "tsx src/cli/index.ts",
     "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "smoke:link": "npm run build && npm link && spell --help",
+    "smoke:npx": "npm run build && npx --yes --package file:. spell --help"
   },
   "dependencies": {
     "ajv": "^8.17.1",

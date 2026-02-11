@@ -18,6 +18,17 @@ Test:
 Local dev:
   npm run dev -- --help
 
+Binary smoke checks:
+  npm run smoke:link
+  npm run smoke:npx
+
+Manual link:
+  npm link
+  spell --help
+
+Manual npx (local package):
+  npx --yes --package file:. spell --help
+
 2. CLI commands
 - spell install <local-path>
 - spell list
