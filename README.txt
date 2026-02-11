@@ -99,3 +99,9 @@ Use these effect.type words where possible:
 
 6) Show execution log
   spell log <execution-id>
+
+10. UI connection spec
+- Decision-complete button integration spec:
+  /Users/koichinishizuka/spell-runtime/docs/ui-connection-spec-v1.md
+- Sample button registry:
+  /Users/koichinishizuka/spell-runtime/examples/button-registry.v1.json

@@ -1,0 +1,37 @@
+[
+  {
+    "button_id": "hello_dryrun",
+    "label": "Hello (Dry Run)",
+    "description": "Dry run for hello-host fixture",
+    "spell_id": "fixtures/hello-host",
+    "version": "1.0.0",
+    "defaults": {
+      "name": "world"
+    },
+    "requires_yes": false,
+    "requires_allow_billing": false,
+    "allowed_roles": ["admin", "operator"]
+  },
+  {
+    "button_id": "risk_guard_exec",
+    "label": "Risk Guard Execute",
+    "description": "Example requiring explicit risk confirmation",
+    "spell_id": "fixtures/risk-guard",
+    "version": "1.0.0",
+    "defaults": {},
+    "requires_yes": true,
+    "requires_allow_billing": false,
+    "allowed_roles": ["admin"]
+  },
+  {
+    "button_id": "billing_guard_exec",
+    "label": "Billing Guard Execute",
+    "description": "Example requiring billing confirmation",
+    "spell_id": "fixtures/billing-guard",
+    "version": "1.0.0",
+    "defaults": {},
+    "requires_yes": false,
+    "requires_allow_billing": true,
+    "allowed_roles": ["admin"]
+  }
+]
