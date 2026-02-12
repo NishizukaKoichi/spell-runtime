@@ -54,7 +54,7 @@ See sample:
 ## 6. Execution API Contract
 ## 6.0 Discovery and UI endpoints
 - `GET /api/buttons`
-- `GET /api/spell-executions`
+- `GET /api/spell-executions` (query: `status`, `button_id`, `limit`)
 - `GET /api/spell-executions/:execution_id`
 - `GET /` (minimal receipts UI)
 - `GET /ui/app.js` (UI client script)
@@ -96,6 +96,8 @@ Response (failure):
 
 ## 6.2 GET /api/spell-executions/:execution_id
 Returns execution summary and sanitized receipt (no raw stdout/stderr).
+
+Execution list state is persisted at `~/.spell/logs/index.json` so lists survive API restarts.
 
 ## 7. Command Construction Rules
 Given registry entry and request:

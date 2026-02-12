@@ -5,6 +5,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { loadButtonRegistryFromFile, resolveButtonEntry, type ButtonRegistryV1 } from "../contract/buttonRegistry";
+import { ensureSpellDirs, logsRoot } from "../util/paths";
 import { renderReceiptsClientJs, renderReceiptsHtml } from "./ui";
 
 export interface ExecutionApiServerOptions {
@@ -52,20 +53,52 @@ interface StartExecutionApiServerResult {
   close: () => Promise<void>;
 }
 
+interface ListExecutionsQuery {
+  statuses: Set<JobStatus> | null;
+  buttonId: string | null;
+  limit: number;
+}
+
+interface PersistedExecutionIndexV1 {
+  version: "v1";
+  updated_at: string;
+  executions: ExecutionJob[];
+}
+
 const DEFAULT_BODY_LIMIT = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_RATE_WINDOW_MS = 60_000;
 const DEFAULT_RATE_MAX = 20;
 const DEFAULT_MAX_CONCURRENT_EXECUTIONS = 4;
+const DEFAULT_LIST_LIMIT = 100;
+const MAX_LIST_LIMIT = 500;
 
 export async function startExecutionApiServer(
   options: ExecutionApiServerOptions = {}
 ): Promise<StartExecutionApiServerResult> {
   const registryPath = options.registryPath ?? path.join(process.cwd(), "examples", "button-registry.v1.json");
   const registry = await loadButtonRegistryFromFile(registryPath);
+  await ensureSpellDirs();
 
-  const jobs = new Map<string, ExecutionJob>();
+  const executionIndexPath = path.join(logsRoot(), "index.json");
+  const jobs = await loadExecutionJobsIndex(executionIndexPath);
+  const recovered = recoverInterruptedJobs(jobs);
   const postHistoryByIp = new Map<string, number[]>();
+  const runningJobPromises = new Set<Promise<void>>();
+  let persistQueue = Promise.resolve();
+
+  const persistJobs = async (): Promise<void> => {
+    persistQueue = persistQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await writeExecutionJobsIndex(executionIndexPath, jobs);
+      });
+    await persistQueue;
+  };
+
+  if (recovered > 0) {
+    await persistJobs();
+  }
 
   const bodyLimit = options.requestBodyLimitBytes ?? DEFAULT_BODY_LIMIT;
   const executionTimeoutMs = options.executionTimeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -189,7 +222,22 @@ export async function startExecutionApiServer(
         };
 
         jobs.set(executionId, job);
-        void runJob(job, input, parsed.dry_run ?? false, entry.required_confirmations, executionTimeoutMs, jobs);
+        await persistJobs();
+        let runningJob: Promise<void>;
+        runningJob = runJob(
+          job,
+          input,
+          parsed.dry_run ?? false,
+          entry.required_confirmations,
+          executionTimeoutMs,
+          jobs,
+          persistJobs
+        )
+          .catch(() => undefined)
+          .finally(() => {
+            runningJobPromises.delete(runningJob);
+          });
+        runningJobPromises.add(runningJob);
 
         return sendJson(res, 202, {
           ok: true,
@@ -216,12 +264,30 @@ export async function startExecutionApiServer(
       }
 
       if (method === "GET" && route === "/spell-executions") {
+        let query: ListExecutionsQuery;
+        try {
+          query = parseListExecutionsQuery(url.searchParams);
+        } catch (error) {
+          return sendJson(res, 400, {
+            ok: false,
+            error_code: "INVALID_QUERY",
+            message: (error as Error).message
+          });
+        }
+
         const executions = Array.from(jobs.values())
+          .filter((job) => matchJobByQuery(job, query))
           .sort((a, b) => b.created_at.localeCompare(a.created_at))
+          .slice(0, query.limit)
           .map((job) => summarizeJob(job));
 
         return sendJson(res, 200, {
           ok: true,
+          filters: {
+            status: query.statuses ? Array.from(query.statuses) : [],
+            button_id: query.buttonId ?? null,
+            limit: query.limit
+          },
           executions
         });
       }
@@ -270,6 +336,7 @@ export async function startExecutionApiServer(
       await new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
       });
+      await Promise.allSettled(Array.from(runningJobPromises));
     }
   };
 }
@@ -280,7 +347,8 @@ async function runJob(
   dryRun: boolean,
   confirmations: { risk: boolean; billing: boolean },
   executionTimeoutMs: number,
-  jobs: Map<string, ExecutionJob>
+  jobs: Map<string, ExecutionJob>,
+  persistJobs: () => Promise<void>
 ): Promise<void> {
   const cliPath = path.resolve(process.cwd(), "dist", "cli", "index.js");
   const tempDir = await mkdtemp(path.join(tmpdir(), "spell-exec-api-"));
@@ -298,6 +366,7 @@ async function runJob(
     started_at: new Date().toISOString()
   };
   jobs.set(job.execution_id, running);
+  await persistJobs();
 
   const child = spawn(process.execPath, args, {
     shell: false,
@@ -352,6 +421,7 @@ async function runJob(
       error_code: "EXECUTION_TIMEOUT",
       message: `execution exceeded timeout ${executionTimeoutMs}ms`
     });
+    await persistJobs();
     await rm(tempDir, { recursive: true, force: true });
     return;
   }
@@ -362,6 +432,7 @@ async function runJob(
       status: "succeeded",
       message: "completed"
     });
+    await persistJobs();
     await rm(tempDir, { recursive: true, force: true });
     return;
   }
@@ -373,6 +444,7 @@ async function runJob(
     error_code: mapped.code,
     message: mapped.message
   });
+  await persistJobs();
 
   await rm(tempDir, { recursive: true, force: true });
 }
@@ -575,6 +647,144 @@ function countInFlightJobs(jobs: Map<string, ExecutionJob>): number {
     }
   }
   return total;
+}
+
+function parseListExecutionsQuery(params: URLSearchParams): ListExecutionsQuery {
+  const statusParam = params.get("status");
+  const buttonIdParam = params.get("button_id");
+  const limitParam = params.get("limit");
+
+  let statuses: Set<JobStatus> | null = null;
+  if (statusParam && statusParam.trim() !== "") {
+    statuses = new Set<JobStatus>();
+    for (const raw of statusParam.split(",")) {
+      const value = raw.trim();
+      if (!value) continue;
+      if (!isJobStatus(value)) {
+        throw new Error(`invalid status filter: ${value}`);
+      }
+      statuses.add(value);
+    }
+    if (statuses.size === 0) {
+      statuses = null;
+    }
+  }
+
+  let limit = DEFAULT_LIST_LIMIT;
+  if (limitParam && limitParam.trim() !== "") {
+    const parsed = Number(limitParam);
+    if (!Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_LIST_LIMIT) {
+      throw new Error(`invalid limit: must be integer in range 1-${MAX_LIST_LIMIT}`);
+    }
+    limit = parsed;
+  }
+
+  const buttonId = buttonIdParam && buttonIdParam.trim() !== "" ? buttonIdParam.trim() : null;
+
+  return {
+    statuses,
+    buttonId,
+    limit
+  };
+}
+
+function matchJobByQuery(job: ExecutionJob, query: ListExecutionsQuery): boolean {
+  if (query.statuses && !query.statuses.has(job.status)) {
+    return false;
+  }
+  if (query.buttonId && job.button_id !== query.buttonId) {
+    return false;
+  }
+  return true;
+}
+
+function isJobStatus(value: string): value is JobStatus {
+  return value === "queued" || value === "running" || value === "succeeded" || value === "failed" || value === "timeout";
+}
+
+function recoverInterruptedJobs(jobs: Map<string, ExecutionJob>): number {
+  let recovered = 0;
+  const now = new Date().toISOString();
+
+  for (const [executionId, job] of jobs.entries()) {
+    if (job.status !== "queued" && job.status !== "running") {
+      continue;
+    }
+
+    jobs.set(executionId, {
+      ...job,
+      status: "failed",
+      finished_at: now,
+      error_code: "SERVER_RESTARTED",
+      message: "execution interrupted by server restart"
+    });
+    recovered += 1;
+  }
+
+  return recovered;
+}
+
+async function loadExecutionJobsIndex(filePath: string): Promise<Map<string, ExecutionJob>> {
+  let raw: string;
+  try {
+    raw = await readFile(filePath, "utf8");
+  } catch {
+    return new Map<string, ExecutionJob>();
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    return new Map<string, ExecutionJob>();
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return new Map<string, ExecutionJob>();
+  }
+
+  const index = parsed as Partial<PersistedExecutionIndexV1>;
+  if (index.version !== "v1" || !Array.isArray(index.executions)) {
+    return new Map<string, ExecutionJob>();
+  }
+
+  const jobs = new Map<string, ExecutionJob>();
+  for (const item of index.executions) {
+    if (!isExecutionJob(item)) {
+      continue;
+    }
+    jobs.set(item.execution_id, item);
+  }
+
+  return jobs;
+}
+
+async function writeExecutionJobsIndex(filePath: string, jobs: Map<string, ExecutionJob>): Promise<void> {
+  const payload: PersistedExecutionIndexV1 = {
+    version: "v1",
+    updated_at: new Date().toISOString(),
+    executions: Array.from(jobs.values())
+  };
+
+  await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+}
+
+function isExecutionJob(value: unknown): value is ExecutionJob {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const obj = value as Record<string, unknown>;
+  return (
+    typeof obj.execution_id === "string" &&
+    typeof obj.button_id === "string" &&
+    typeof obj.spell_id === "string" &&
+    typeof obj.version === "string" &&
+    typeof obj.actor_role === "string" &&
+    typeof obj.created_at === "string" &&
+    typeof obj.status === "string" &&
+    isJobStatus(obj.status)
+  );
 }
 
 function deepMerge(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {

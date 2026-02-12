@@ -171,11 +171,12 @@ By default it listens on `:8787` and reads:
   - request body: `64KB`
   - execution timeout: `60s`
   - in-flight executions: `4`
+- execution index persistence: `~/.spell/logs/index.json`
 - routes:
   - `GET /` (minimal Receipts UI)
   - `GET /ui/app.js` (UI client script)
   - `GET /api/buttons`
-  - `GET /api/spell-executions`
+  - `GET /api/spell-executions` (`status`, `button_id`, `limit` query supported)
   - `POST /api/spell-executions`
   - `GET /api/spell-executions/:execution_id`
 

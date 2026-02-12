@@ -126,7 +126,24 @@ export function renderReceiptsHtml(): string {
 
     <section class="panel" id="executionsPanel">
       <h2>Executions</h2>
-      <div class="hint">Shows queued/running/succeeded/failed.</div>
+      <div class="hint">Shows queued/running/succeeded/failed, with API filters.</div>
+      <div class="row" style="margin-bottom:10px">
+        <div style="width:200px">
+          <label>status filter</label>
+          <select id="executionStatus" style="width:100%;background:#0b1220;border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px">
+            <option value="">all</option>
+            <option value="queued">queued</option>
+            <option value="running">running</option>
+            <option value="succeeded">succeeded</option>
+            <option value="failed">failed</option>
+            <option value="timeout">timeout</option>
+          </select>
+        </div>
+        <div style="width:120px">
+          <label>limit</label>
+          <input id="executionLimit" type="text" value="20" />
+        </div>
+      </div>
       <div id="executions"></div>
     </section>
 
@@ -150,6 +167,8 @@ export function renderReceiptsHtml(): string {
           <label><input id="riskAck" type="checkbox" /> risk_acknowledged</label>
           <label><input id="billingAck" type="checkbox" /> billing_acknowledged</label>
         </div>
+        <div class="hint" id="guardHint" style="margin-top:8px">Select a button to see required confirmations.</div>
+        <div class="hint" id="roleHint">Allowed roles: -</div>
 
         <div style="margin-top:8px">
           <label>input JSON (merged over defaults)</label>
@@ -198,12 +217,18 @@ export function renderReceiptsClientJs(): string {
     '  inputJson: document.getElementById("inputJson"),',
     '  runForm: document.getElementById("runForm"),',
     '  lastResponse: document.getElementById("lastResponse"),',
-    '  executionDetail: document.getElementById("executionDetail")',
+    '  executionDetail: document.getElementById("executionDetail"),',
+    '  guardHint: document.getElementById("guardHint"),',
+    '  roleHint: document.getElementById("roleHint"),',
+    '  executionStatus: document.getElementById("executionStatus"),',
+    '  executionLimit: document.getElementById("executionLimit")',
     "};",
     "",
     'document.getElementById("reloadButtons").addEventListener("click", loadButtons);',
     'document.getElementById("reloadExecutions").addEventListener("click", loadExecutions);',
     'document.getElementById("clearSelection").addEventListener("click", clearSelection);',
+    "el.executionStatus.addEventListener('change', loadExecutions);",
+    "el.executionLimit.addEventListener('change', loadExecutions);",
     "el.runForm.addEventListener('submit', submitExecution);",
     "",
     "async function loadButtons() {",
@@ -227,6 +252,7 @@ export function renderReceiptsClientJs(): string {
     "      '<div><strong>' + escapeHtml(button.label || button.button_id) + '</strong></div>',",
     "      '<div class=\"hint\">button_id: ' + escapeHtml(button.button_id) + '</div>',",
     "      '<div class=\"hint\">spell: ' + escapeHtml(button.spell_id) + '@' + escapeHtml(button.version) + '</div>',",
+    "      '<div class=\"hint\">allowed roles: ' + escapeHtml((button.allowed_roles || []).join(',')) + '</div>',",
     "      '<div><span class=\"pill\">risk:' + String(button.required_confirmations.risk) + '</span><span class=\"pill\">billing:' + String(button.required_confirmations.billing) + '</span></div>',",
     "      '<div style=\"margin-top:8px\"><button data-button-id=\"' + escapeHtml(button.button_id) + '\">Select</button></div>'",
     "    ].join('');",
@@ -246,6 +272,7 @@ export function renderReceiptsClientJs(): string {
     "  el.riskAck.checked = false;",
     "  el.billingAck.checked = false;",
     "  el.inputJson.value = JSON.stringify({}, null, 2);",
+    "  updateGuardHints();",
     "}",
     "",
     "function clearSelection() {",
@@ -254,12 +281,54 @@ export function renderReceiptsClientJs(): string {
     "  el.inputJson.value = '{}';",
     "  el.riskAck.checked = false;",
     "  el.billingAck.checked = false;",
+    "  updateGuardHints();",
+    "}",
+    "",
+    "function updateGuardHints() {",
+    "  if (!state.selectedButton) {",
+    "    el.guardHint.textContent = 'Select a button to see required confirmations.';",
+    "    el.roleHint.textContent = 'Allowed roles: -';",
+    "    el.riskAck.checked = false;",
+    "    el.billingAck.checked = false;",
+    "    el.riskAck.disabled = true;",
+    "    el.billingAck.disabled = true;",
+    "    return;",
+    "  }",
+    "",
+    "  const requiredRisk = Boolean(state.selectedButton.required_confirmations && state.selectedButton.required_confirmations.risk);",
+    "  const requiredBilling = Boolean(state.selectedButton.required_confirmations && state.selectedButton.required_confirmations.billing);",
+    "  el.riskAck.disabled = !requiredRisk;",
+    "  el.billingAck.disabled = !requiredBilling;",
+    "  if (!requiredRisk) el.riskAck.checked = false;",
+    "  if (!requiredBilling) el.billingAck.checked = false;",
+    "",
+    "  el.guardHint.textContent = 'Required confirmations: risk=' + String(requiredRisk) + ', billing=' + String(requiredBilling);",
+    "  el.roleHint.textContent = 'Allowed roles: ' + (state.selectedButton.allowed_roles || []).join(', ');",
     "}",
     "",
     "async function submitExecution(event) {",
     "  event.preventDefault();",
     "  if (!state.selectedButton) {",
     "    setLastResponse({ ok: false, message: 'Select a button first' });",
+    "    return;",
+    "  }",
+    "",
+    "  const requiredRisk = Boolean(state.selectedButton.required_confirmations && state.selectedButton.required_confirmations.risk);",
+    "  const requiredBilling = Boolean(state.selectedButton.required_confirmations && state.selectedButton.required_confirmations.billing);",
+    "  const actorRole = el.actorRole.value || 'anonymous';",
+    "",
+    "  if (requiredRisk && !el.riskAck.checked) {",
+    "    setLastResponse({ ok: false, message: 'risk confirmation is required for this button' });",
+    "    return;",
+    "  }",
+    "",
+    "  if (requiredBilling && !el.billingAck.checked) {",
+    "    setLastResponse({ ok: false, message: 'billing confirmation is required for this button' });",
+    "    return;",
+    "  }",
+    "",
+    "  if (!state.selectedButton.allowed_roles.includes(actorRole)) {",
+    "    setLastResponse({ ok: false, message: 'actor role not allowed for selected button: ' + actorRole });",
     "    return;",
     "  }",
     "",
@@ -274,7 +343,7 @@ export function renderReceiptsClientJs(): string {
     "  const body = {",
     "    button_id: state.selectedButton.button_id,",
     "    dry_run: el.dryRun.checked,",
-    "    actor_role: el.actorRole.value || 'anonymous',",
+    "    actor_role: actorRole,",
     "    input,",
     "    confirmation: {",
     "      risk_acknowledged: el.riskAck.checked,",
@@ -298,8 +367,26 @@ export function renderReceiptsClientJs(): string {
     "}",
     "",
     "async function loadExecutions() {",
-    "  const res = await fetch('/api/spell-executions');",
+    "  const params = new URLSearchParams();",
+    "  const selectedStatus = String(el.executionStatus.value || '').trim();",
+    "  if (selectedStatus !== '') {",
+    "    params.set('status', selectedStatus);",
+    "  }",
+    "",
+    "  const parsedLimit = Number.parseInt(String(el.executionLimit.value || '').trim(), 10);",
+    "  const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? parsedLimit : 20;",
+    "  if (!Number.isInteger(parsedLimit) || parsedLimit <= 0) {",
+    "    el.executionLimit.value = String(limit);",
+    "  }",
+    "  params.set('limit', String(limit));",
+    "",
+    "  const query = params.toString();",
+    "  const res = await fetch('/api/spell-executions' + (query ? '?' + query : ''));",
     "  const payload = await res.json();",
+    "  if (!payload.ok) {",
+    "    setLastResponse(payload);",
+    "    return;",
+    "  }",
     "  state.executions = payload.executions || [];",
     "  renderExecutions();",
     "",
@@ -355,6 +442,7 @@ export function renderReceiptsClientJs(): string {
     "    .replaceAll(\"'\", '&#039;');",
     "}",
     "",
+    "updateGuardHints();",
     "loadButtons();",
     "loadExecutions();",
     "setInterval(loadExecutions, 2000);",

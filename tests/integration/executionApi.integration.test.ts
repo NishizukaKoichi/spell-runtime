@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -83,11 +83,16 @@ describe("execution api integration", () => {
 
       const page = await fetch(`http://127.0.0.1:${server.port}/`);
       expect(page.status).toBe(200);
-      expect(await page.text()).toContain("Spell Receipts UI");
+      const html = await page.text();
+      expect(html).toContain("Spell Receipts UI");
+      expect(html).toContain("guardHint");
+      expect(html).toContain("executionStatus");
 
       const js = await fetch(`http://127.0.0.1:${server.port}/ui/app.js`);
       expect(js.status).toBe(200);
-      expect(await js.text()).toContain("loadExecutions");
+      const script = await js.text();
+      expect(script).toContain("updateGuardHints");
+      expect(script).toContain("actor role not allowed for selected button");
     } finally {
       await server.close();
     }
@@ -120,6 +125,98 @@ describe("execution api integration", () => {
       expect(payload.executions.some((execution) => execution.execution_id === executionId)).toBe(true);
     } finally {
       await server.close();
+    }
+  });
+
+  test("GET /api/spell-executions supports status/button_id/limit filters", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json")
+    });
+
+    try {
+      const succeededExecutionId = await createExecution(server.port, {
+        button_id: "publish_site_high_risk",
+        actor_role: "admin",
+        confirmation: { risk_acknowledged: true }
+      });
+      await waitForExecution(server.port, succeededExecutionId);
+
+      const failedExecutionId = await createExecution(server.port, {
+        button_id: "repo_ops_guarded",
+        actor_role: "admin"
+      });
+      await waitForExecution(server.port, failedExecutionId);
+
+      const successOnly = await fetch(
+        `http://127.0.0.1:${server.port}/api/spell-executions?status=succeeded&button_id=publish_site_high_risk&limit=1`
+      );
+      expect(successOnly.status).toBe(200);
+      const successPayload = (await successOnly.json()) as {
+        executions: Array<{ execution_id: string; status: string }>;
+      };
+      expect(successPayload.executions.length).toBe(1);
+      expect(successPayload.executions[0]?.execution_id).toBe(succeededExecutionId);
+      expect(successPayload.executions[0]?.status).toBe("succeeded");
+
+      const failedOnly = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions?status=failed`);
+      expect(failedOnly.status).toBe(200);
+      const failedPayload = (await failedOnly.json()) as {
+        executions: Array<{ execution_id: string; status: string }>;
+      };
+      expect(failedPayload.executions.some((execution) => execution.execution_id === failedExecutionId)).toBe(true);
+      expect(failedPayload.executions.every((execution) => execution.status === "failed")).toBe(true);
+
+      const invalid = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions?status=unknown`);
+      expect(invalid.status).toBe(400);
+      const invalidPayload = (await invalid.json()) as Record<string, unknown>;
+      expect(invalidPayload.error_code).toBe("INVALID_QUERY");
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("persists execution list index and restores after server restart", async () => {
+    const registryPath = path.join(process.cwd(), "examples/button-registry.v1.json");
+
+    const server1 = await startExecutionApiServer({
+      port: 0,
+      registryPath
+    });
+
+    let executionId = "";
+    try {
+      executionId = await createExecution(server1.port, {
+        button_id: "publish_site_high_risk",
+        actor_role: "admin",
+        confirmation: { risk_acknowledged: true }
+      });
+      await waitForExecution(server1.port, executionId);
+    } finally {
+      await server1.close();
+    }
+
+    const indexPath = path.join(tempHome, ".spell", "logs", "index.json");
+    const indexRaw = await readFile(indexPath, "utf8");
+    expect(indexRaw).toContain(executionId);
+
+    const server2 = await startExecutionApiServer({
+      port: 0,
+      registryPath
+    });
+
+    try {
+      const listed = await fetch(`http://127.0.0.1:${server2.port}/api/spell-executions?status=succeeded`);
+      expect(listed.status).toBe(200);
+      const payload = (await listed.json()) as {
+        executions: Array<{ execution_id: string }>;
+      };
+      expect(payload.executions.some((execution) => execution.execution_id === executionId)).toBe(true);
+
+      const detail = await fetch(`http://127.0.0.1:${server2.port}/api/spell-executions/${executionId}`);
+      expect(detail.status).toBe(200);
+    } finally {
+      await server2.close();
     }
   });
 
@@ -273,4 +370,25 @@ async function waitForExecution(port: number, executionId: string): Promise<{ ex
   }
 
   throw new Error("execution did not finish in time");
+}
+
+async function createExecution(
+  port: number,
+  body: {
+    button_id: string;
+    actor_role: string;
+    confirmation?: {
+      risk_acknowledged?: boolean;
+      billing_acknowledged?: boolean;
+    };
+  }
+): Promise<string> {
+  const response = await fetch(`http://127.0.0.1:${port}/api/spell-executions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  expect(response.status).toBe(202);
+  const payload = (await response.json()) as Record<string, unknown>;
+  return String(payload.execution_id);
 }
