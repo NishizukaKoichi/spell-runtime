@@ -8,6 +8,9 @@ async function main(): Promise<void> {
   const rateLimitWindowMs = readOptionalIntegerEnv("SPELL_API_RATE_LIMIT_WINDOW_MS", 1);
   const rateLimitMaxRequests = readOptionalIntegerEnv("SPELL_API_RATE_LIMIT_MAX_REQUESTS", 1);
   const maxConcurrentExecutions = readOptionalIntegerEnv("SPELL_API_MAX_CONCURRENT_EXECUTIONS", 0);
+  const authTokens = readOptionalCsvEnv("SPELL_API_AUTH_TOKENS");
+  const logRetentionDays = readOptionalIntegerEnv("SPELL_API_LOG_RETENTION_DAYS", 0);
+  const logMaxFiles = readOptionalIntegerEnv("SPELL_API_LOG_MAX_FILES", 0);
 
   const started = await startExecutionApiServer({
     port,
@@ -16,7 +19,10 @@ async function main(): Promise<void> {
     executionTimeoutMs,
     rateLimitWindowMs,
     rateLimitMaxRequests,
-    maxConcurrentExecutions
+    maxConcurrentExecutions,
+    authTokens,
+    logRetentionDays,
+    logMaxFiles
   });
 
   process.stdout.write(`spell execution api listening on :${started.port}\n`);
@@ -50,4 +56,22 @@ function readInteger(name: string, raw: string, min: number): number {
     throw new Error(`${name} must be an integer >= ${min}`);
   }
   return num;
+}
+
+function readOptionalCsvEnv(name: string): string[] | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") {
+    return undefined;
+  }
+
+  const values = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  if (values.length === 0) {
+    return undefined;
+  }
+
+  return values;
 }

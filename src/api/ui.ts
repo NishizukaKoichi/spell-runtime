@@ -113,6 +113,10 @@ export function renderReceiptsHtml(): string {
       <h1>Spell Receipts UI</h1>
       <div class="hint">Button registry drives execution. Client sends button_id only.</div>
       <div class="row">
+        <div style="width:360px">
+          <label>API token (optional; required when server auth is enabled)</label>
+          <input id="apiToken" type="text" placeholder="paste token for Authorization: Bearer ..." />
+        </div>
         <button id="reloadButtons" class="secondary">Reload Buttons</button>
         <button id="reloadExecutions" class="secondary">Reload Executions</button>
       </div>
@@ -221,7 +225,8 @@ export function renderReceiptsClientJs(): string {
     '  guardHint: document.getElementById("guardHint"),',
     '  roleHint: document.getElementById("roleHint"),',
     '  executionStatus: document.getElementById("executionStatus"),',
-    '  executionLimit: document.getElementById("executionLimit")',
+    '  executionLimit: document.getElementById("executionLimit"),',
+    '  apiToken: document.getElementById("apiToken")',
     "};",
     "",
     'document.getElementById("reloadButtons").addEventListener("click", loadButtons);',
@@ -229,10 +234,11 @@ export function renderReceiptsClientJs(): string {
     'document.getElementById("clearSelection").addEventListener("click", clearSelection);',
     "el.executionStatus.addEventListener('change', loadExecutions);",
     "el.executionLimit.addEventListener('change', loadExecutions);",
+    "el.apiToken.addEventListener('change', () => { loadButtons(); loadExecutions(); });",
     "el.runForm.addEventListener('submit', submitExecution);",
     "",
     "async function loadButtons() {",
-    "  const res = await fetch('/api/buttons');",
+    "  const res = await fetch('/api/buttons', { headers: makeApiHeaders(false) });",
     "  const payload = await res.json();",
     "  state.buttons = payload.buttons || [];",
     "  renderButtons();",
@@ -353,7 +359,7 @@ export function renderReceiptsClientJs(): string {
     "",
     "  const res = await fetch('/api/spell-executions', {",
     "    method: 'POST',",
-    "    headers: { 'content-type': 'application/json' },",
+    "    headers: makeApiHeaders(true),",
     "    body: JSON.stringify(body)",
     "  });",
     "  const payload = await res.json();",
@@ -381,7 +387,7 @@ export function renderReceiptsClientJs(): string {
     "  params.set('limit', String(limit));",
     "",
     "  const query = params.toString();",
-    "  const res = await fetch('/api/spell-executions' + (query ? '?' + query : ''));",
+    "  const res = await fetch('/api/spell-executions' + (query ? '?' + query : ''), { headers: makeApiHeaders(false) });",
     "  const payload = await res.json();",
     "  if (!payload.ok) {",
     "    setLastResponse(payload);",
@@ -424,13 +430,25 @@ export function renderReceiptsClientJs(): string {
     "}",
     "",
     "async function loadExecutionDetail(executionId) {",
-    "  const res = await fetch('/api/spell-executions/' + encodeURIComponent(executionId));",
+    "  const res = await fetch('/api/spell-executions/' + encodeURIComponent(executionId), { headers: makeApiHeaders(false) });",
     "  const payload = await res.json();",
     "  el.executionDetail.textContent = JSON.stringify(payload, null, 2);",
     "}",
     "",
     "function setLastResponse(payload) {",
     "  el.lastResponse.textContent = JSON.stringify(payload, null, 2);",
+    "}",
+    "",
+    "function makeApiHeaders(includeJson) {",
+    "  const headers = {};",
+    "  if (includeJson) {",
+    "    headers['content-type'] = 'application/json';",
+    "  }",
+    "  const token = String(el.apiToken.value || '').trim();",
+    "  if (token !== '') {",
+    "    headers.authorization = 'Bearer ' + token;",
+    "  }",
+    "  return headers;",
     "}",
     "",
     "function escapeHtml(value) {",

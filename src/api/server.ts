@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { loadButtonRegistryFromFile, resolveButtonEntry, type ButtonRegistryV1 } from "../contract/buttonRegistry";
 import { ensureSpellDirs, logsRoot } from "../util/paths";
@@ -16,6 +16,9 @@ export interface ExecutionApiServerOptions {
   rateLimitWindowMs?: number;
   rateLimitMaxRequests?: number;
   maxConcurrentExecutions?: number;
+  authTokens?: string[];
+  logRetentionDays?: number;
+  logMaxFiles?: number;
 }
 
 type JobStatus = "queued" | "running" | "succeeded" | "failed" | "timeout";
@@ -72,6 +75,8 @@ const DEFAULT_RATE_MAX = 20;
 const DEFAULT_MAX_CONCURRENT_EXECUTIONS = 4;
 const DEFAULT_LIST_LIMIT = 100;
 const MAX_LIST_LIMIT = 500;
+const DEFAULT_LOG_RETENTION_DAYS = 14;
+const DEFAULT_LOG_MAX_FILES = 500;
 
 export async function startExecutionApiServer(
   options: ExecutionApiServerOptions = {}
@@ -96,15 +101,23 @@ export async function startExecutionApiServer(
     await persistQueue;
   };
 
-  if (recovered > 0) {
-    await persistJobs();
-  }
-
   const bodyLimit = options.requestBodyLimitBytes ?? DEFAULT_BODY_LIMIT;
   const executionTimeoutMs = options.executionTimeoutMs ?? DEFAULT_TIMEOUT_MS;
   const rateWindowMs = options.rateLimitWindowMs ?? DEFAULT_RATE_WINDOW_MS;
   const rateMaxRequests = options.rateLimitMaxRequests ?? DEFAULT_RATE_MAX;
   const maxConcurrentExecutions = options.maxConcurrentExecutions ?? DEFAULT_MAX_CONCURRENT_EXECUTIONS;
+  const authTokens = new Set(
+    (options.authTokens ?? []).map((token) => token.trim()).filter((token) => token.length > 0)
+  );
+  const logRetentionDays = options.logRetentionDays ?? DEFAULT_LOG_RETENTION_DAYS;
+  const logMaxFiles = options.logMaxFiles ?? DEFAULT_LOG_MAX_FILES;
+  const logsDirectory = logsRoot();
+
+  const prunedOnBoot = await applyLogRetentionPolicy(logsDirectory, jobs, logRetentionDays, logMaxFiles);
+
+  if (recovered > 0 || prunedOnBoot) {
+    await persistJobs();
+  }
 
   const server = createServer(async (req, res) => {
     try {
@@ -124,6 +137,17 @@ export async function startExecutionApiServer(
 
       if (method === "GET" && route === "/health") {
         return sendJson(res, 200, { ok: true });
+      }
+
+      if (requiresApiAuth(route)) {
+        const auth = authorizeRequest(req, authTokens);
+        if (!auth.ok) {
+          return sendJson(res, 401, {
+            ok: false,
+            error_code: auth.errorCode,
+            message: auth.message
+          });
+        }
       }
 
       if (method === "POST" && route === "/spell-executions") {
@@ -231,7 +255,12 @@ export async function startExecutionApiServer(
           entry.required_confirmations,
           executionTimeoutMs,
           jobs,
-          persistJobs
+          persistJobs,
+          {
+            logsDirectory,
+            logRetentionDays,
+            logMaxFiles
+          }
         )
           .catch(() => undefined)
           .finally(() => {
@@ -348,7 +377,12 @@ async function runJob(
   confirmations: { risk: boolean; billing: boolean },
   executionTimeoutMs: number,
   jobs: Map<string, ExecutionJob>,
-  persistJobs: () => Promise<void>
+  persistJobs: () => Promise<void>,
+  retention: {
+    logsDirectory: string;
+    logRetentionDays: number;
+    logMaxFiles: number;
+  }
 ): Promise<void> {
   const cliPath = path.resolve(process.cwd(), "dist", "cli", "index.js");
   const tempDir = await mkdtemp(path.join(tmpdir(), "spell-exec-api-"));
@@ -422,6 +456,7 @@ async function runJob(
       message: `execution exceeded timeout ${executionTimeoutMs}ms`
     });
     await persistJobs();
+    await applyLogRetentionAndPersist(retention, jobs, persistJobs);
     await rm(tempDir, { recursive: true, force: true });
     return;
   }
@@ -433,6 +468,7 @@ async function runJob(
       message: "completed"
     });
     await persistJobs();
+    await applyLogRetentionAndPersist(retention, jobs, persistJobs);
     await rm(tempDir, { recursive: true, force: true });
     return;
   }
@@ -445,6 +481,7 @@ async function runJob(
     message: mapped.message
   });
   await persistJobs();
+  await applyLogRetentionAndPersist(retention, jobs, persistJobs);
 
   await rm(tempDir, { recursive: true, force: true });
 }
@@ -702,6 +739,59 @@ function isJobStatus(value: string): value is JobStatus {
   return value === "queued" || value === "running" || value === "succeeded" || value === "failed" || value === "timeout";
 }
 
+function requiresApiAuth(route: string): boolean {
+  return route === "/buttons" || route === "/spell-executions" || route.startsWith("/spell-executions/");
+}
+
+function authorizeRequest(
+  req: IncomingMessage,
+  authTokens: Set<string>
+): { ok: true } | { ok: false; errorCode: string; message: string } {
+  if (authTokens.size === 0) {
+    return { ok: true };
+  }
+
+  const token = readAuthToken(req);
+  if (!token) {
+    return { ok: false, errorCode: "AUTH_REQUIRED", message: "authorization token is required" };
+  }
+
+  for (const expectedToken of authTokens) {
+    if (secureTokenEquals(expectedToken, token)) {
+      return { ok: true };
+    }
+  }
+
+  return { ok: false, errorCode: "AUTH_INVALID", message: "invalid authorization token" };
+}
+
+function readAuthToken(req: IncomingMessage): string | null {
+  const authorization = req.headers.authorization;
+  if (typeof authorization === "string") {
+    const matched = /^Bearer\s+(.+)$/.exec(authorization.trim());
+    if (matched && matched[1]) {
+      return matched[1].trim();
+    }
+  }
+
+  const apiKey = req.headers["x-api-key"];
+  if (typeof apiKey === "string" && apiKey.trim() !== "") {
+    return apiKey.trim();
+  }
+
+  return null;
+}
+
+function secureTokenEquals(expected: string, actual: string): boolean {
+  const expectedBuf = Buffer.from(expected);
+  const actualBuf = Buffer.from(actual);
+  if (expectedBuf.length !== actualBuf.length) {
+    return false;
+  }
+
+  return timingSafeEqual(expectedBuf, actualBuf);
+}
+
 function recoverInterruptedJobs(jobs: Map<string, ExecutionJob>): number {
   let recovered = 0;
   const now = new Date().toISOString();
@@ -767,6 +857,145 @@ async function writeExecutionJobsIndex(filePath: string, jobs: Map<string, Execu
   };
 
   await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+}
+
+async function applyLogRetentionAndPersist(
+  retention: {
+    logsDirectory: string;
+    logRetentionDays: number;
+    logMaxFiles: number;
+  },
+  jobs: Map<string, ExecutionJob>,
+  persistJobs: () => Promise<void>
+): Promise<void> {
+  const pruned = await applyLogRetentionPolicy(
+    retention.logsDirectory,
+    jobs,
+    retention.logRetentionDays,
+    retention.logMaxFiles
+  );
+
+  if (pruned) {
+    await persistJobs();
+  }
+}
+
+async function applyLogRetentionPolicy(
+  logsDirectory: string,
+  jobs: Map<string, ExecutionJob>,
+  logRetentionDays: number,
+  logMaxFiles: number
+): Promise<boolean> {
+  const entries = await readdir(logsDirectory).catch(() => []);
+  const candidates: Array<{ fileName: string; mtimeMs: number }> = [];
+
+  for (const entry of entries) {
+    if (!entry.endsWith(".json") || entry === "index.json") {
+      continue;
+    }
+
+    const filePath = path.join(logsDirectory, entry);
+    const info = await stat(filePath).catch(() => null);
+    if (!info || !info.isFile()) {
+      continue;
+    }
+
+    candidates.push({
+      fileName: entry,
+      mtimeMs: info.mtimeMs
+    });
+  }
+
+  if (candidates.length === 0) {
+    return false;
+  }
+
+  const toDelete = new Set<string>();
+
+  if (logRetentionDays > 0) {
+    const cutoff = Date.now() - logRetentionDays * 24 * 60 * 60 * 1000;
+    for (const candidate of candidates) {
+      if (candidate.mtimeMs < cutoff) {
+        toDelete.add(candidate.fileName);
+      }
+    }
+  }
+
+  const remaining = candidates
+    .filter((candidate) => !toDelete.has(candidate.fileName))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || b.fileName.localeCompare(a.fileName));
+
+  if (logMaxFiles > 0 && remaining.length > logMaxFiles) {
+    for (let i = logMaxFiles; i < remaining.length; i += 1) {
+      toDelete.add(remaining[i].fileName);
+    }
+  }
+
+  if (toDelete.size === 0) {
+    return false;
+  }
+
+  let changed = false;
+  for (const fileName of toDelete) {
+    const removed = await rm(path.join(logsDirectory, fileName), { force: true })
+      .then(() => true)
+      .catch(() => false);
+    if (removed) {
+      changed = true;
+    }
+  }
+
+  const jobIdsToDelete = new Set<string>();
+  const jobsList = Array.from(jobs.values());
+
+  if (logRetentionDays > 0) {
+    const cutoff = Date.now() - logRetentionDays * 24 * 60 * 60 * 1000;
+    for (const job of jobsList) {
+      const time = readJobTimestamp(job);
+      if (time !== null && time < cutoff) {
+        jobIdsToDelete.add(job.execution_id);
+      }
+    }
+  }
+
+  const remainingJobs = jobsList
+    .filter((job) => !jobIdsToDelete.has(job.execution_id))
+    .sort((a, b) => {
+      const t1 = readJobTimestamp(a) ?? 0;
+      const t2 = readJobTimestamp(b) ?? 0;
+      return t2 - t1;
+    });
+
+  if (logMaxFiles > 0 && remainingJobs.length > logMaxFiles) {
+    for (let i = logMaxFiles; i < remainingJobs.length; i += 1) {
+      jobIdsToDelete.add(remainingJobs[i].execution_id);
+    }
+  }
+
+  for (const executionId of jobIdsToDelete) {
+    const job = jobs.get(executionId);
+    if (!job) {
+      continue;
+    }
+
+    if (job.runtime_log_path) {
+      await rm(job.runtime_log_path, { force: true }).catch(() => undefined);
+    }
+
+    jobs.delete(executionId);
+    changed = true;
+  }
+
+  return changed;
+}
+
+function readJobTimestamp(job: ExecutionJob): number | null {
+  const source = job.finished_at ?? job.created_at;
+  const value = Date.parse(source);
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  return value;
 }
 
 function isExecutionJob(value: unknown): value is ExecutionJob {

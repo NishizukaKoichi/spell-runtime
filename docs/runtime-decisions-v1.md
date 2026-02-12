@@ -46,3 +46,12 @@ v1 intentionally excludes:
 - real billing execution
 - DAG/parallel/rollback
 - advanced template language
+
+## 10. Execution API auth and retention controls
+- API authentication is opt-in via token configuration (`SPELL_API_AUTH_TOKENS`).
+- when configured, all `/api/*` routes require bearer/api-key token.
+- execution log inventory is persisted in `~/.spell/logs/index.json`.
+- retention is controlled by:
+  - age (`SPELL_API_LOG_RETENTION_DAYS`, default 14)
+  - max files (`SPELL_API_LOG_MAX_FILES`, default 500)
+- retention pruning updates both log files and in-memory/indexed execution list for consistency.

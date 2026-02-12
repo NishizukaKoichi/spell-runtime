@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -87,12 +87,14 @@ describe("execution api integration", () => {
       expect(html).toContain("Spell Receipts UI");
       expect(html).toContain("guardHint");
       expect(html).toContain("executionStatus");
+      expect(html).toContain("apiToken");
 
       const js = await fetch(`http://127.0.0.1:${server.port}/ui/app.js`);
       expect(js.status).toBe(200);
       const script = await js.text();
       expect(script).toContain("updateGuardHints");
       expect(script).toContain("actor role not allowed for selected button");
+      expect(script).toContain("makeApiHeaders");
     } finally {
       await server.close();
     }
@@ -217,6 +219,74 @@ describe("execution api integration", () => {
       expect(detail.status).toBe(200);
     } finally {
       await server2.close();
+    }
+  });
+
+  test("enforces API auth when auth tokens are configured", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json"),
+      authTokens: ["top-secret-token"]
+    });
+
+    try {
+      const unauthorized = await fetch(`http://127.0.0.1:${server.port}/api/buttons`);
+      expect(unauthorized.status).toBe(401);
+      const unauthorizedPayload = (await unauthorized.json()) as Record<string, unknown>;
+      expect(unauthorizedPayload.error_code).toBe("AUTH_REQUIRED");
+
+      const invalid = await fetch(`http://127.0.0.1:${server.port}/api/buttons`, {
+        headers: { authorization: "Bearer wrong-token" }
+      });
+      expect(invalid.status).toBe(401);
+      const invalidPayload = (await invalid.json()) as Record<string, unknown>;
+      expect(invalidPayload.error_code).toBe("AUTH_INVALID");
+
+      const ok = await fetch(`http://127.0.0.1:${server.port}/api/buttons`, {
+        headers: { authorization: "Bearer top-secret-token" }
+      });
+      expect(ok.status).toBe(200);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("applies log retention max-files policy and prunes execution index", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json"),
+      logRetentionDays: 0,
+      logMaxFiles: 1
+    });
+
+    try {
+      const firstExecutionId = await createExecution(server.port, {
+        button_id: "publish_site_high_risk",
+        actor_role: "admin",
+        confirmation: { risk_acknowledged: true }
+      });
+      await waitForExecution(server.port, firstExecutionId);
+
+      const secondExecutionId = await createExecution(server.port, {
+        button_id: "publish_site_high_risk",
+        actor_role: "admin",
+        confirmation: { risk_acknowledged: true }
+      });
+      await waitForExecution(server.port, secondExecutionId);
+
+      const files = await readdir(path.join(tempHome, ".spell", "logs"));
+      const logFiles = files.filter((name) => name.endsWith(".json") && name !== "index.json");
+      expect(logFiles.length).toBe(1);
+
+      const listed = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`);
+      expect(listed.status).toBe(200);
+      const payload = (await listed.json()) as {
+        executions: Array<{ execution_id: string }>;
+      };
+      expect(payload.executions.length).toBe(1);
+      expect(payload.executions[0]?.execution_id).toBe(secondExecutionId);
+    } finally {
+      await server.close();
     }
   });
 

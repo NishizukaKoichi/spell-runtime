@@ -98,6 +98,7 @@ Response (failure):
 Returns execution summary and sanitized receipt (no raw stdout/stderr).
 
 Execution list state is persisted at `~/.spell/logs/index.json` so lists survive API restarts.
+When API auth is enabled, all `/api/*` endpoints require `Authorization: Bearer <token>` (or `x-api-key`).
 
 ## 7. Command Construction Rules
 Given registry entry and request:
@@ -193,6 +194,7 @@ return parseExecution(stdout);
 - Apply POST rate limiting (v1 minimal fixed-window limiter).
 - Use per-request temp file and delete after execution when possible.
 - Ensure backend logs redact secret keys and env-derived sensitive values.
+- Apply retention policy to audit logs (age-based and/or max-files based).
 
 ## 14. Future Extension Hooks
 - Add queue/async job mode for long-running spells.
