@@ -168,5 +168,9 @@ npm run api:dev
 By default it listens on `:8787` and reads:
 - button registry: `./examples/button-registry.v1.json`
 - routes:
+  - `GET /` (minimal Receipts UI)
+  - `GET /ui/app.js` (UI client script)
+  - `GET /api/buttons`
+  - `GET /api/spell-executions`
   - `POST /api/spell-executions`
   - `GET /api/spell-executions/:execution_id`

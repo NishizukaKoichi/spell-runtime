@@ -5,6 +5,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { loadButtonRegistryFromFile, resolveButtonEntry, type ButtonRegistryV1 } from "../contract/buttonRegistry";
+import { renderReceiptsClientJs, renderReceiptsHtml } from "./ui";
 
 export interface ExecutionApiServerOptions {
   port?: number;
@@ -73,6 +74,16 @@ export async function startExecutionApiServer(
     try {
       const method = req.method ?? "GET";
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      const pathname = url.pathname;
+
+      if (method === "GET" && (pathname === "/" || pathname === "/ui")) {
+        return sendText(res, 200, renderReceiptsHtml(), "text/html; charset=utf-8");
+      }
+
+      if (method === "GET" && pathname === "/ui/app.js") {
+        return sendText(res, 200, renderReceiptsClientJs(), "text/javascript; charset=utf-8");
+      }
+
       const route = normalizeRoute(url.pathname);
 
       if (method === "GET" && route === "/health") {
@@ -173,6 +184,34 @@ export async function startExecutionApiServer(
           ok: true,
           execution_id: executionId,
           status: job.status
+        });
+      }
+
+      if (method === "GET" && route === "/buttons") {
+        return sendJson(res, 200, {
+          ok: true,
+          version: registry.version,
+          buttons: registry.buttons.map((button) => ({
+            button_id: button.button_id,
+            label: button.label ?? button.button_id,
+            description: button.description ?? "",
+            spell_id: button.spell_id,
+            version: button.version,
+            defaults: button.defaults,
+            required_confirmations: button.required_confirmations,
+            allowed_roles: button.allowed_roles
+          }))
+        });
+      }
+
+      if (method === "GET" && route === "/spell-executions") {
+        const executions = Array.from(jobs.values())
+          .sort((a, b) => b.created_at.localeCompare(a.created_at))
+          .map((job) => summarizeJob(job));
+
+        return sendJson(res, 200, {
+          ok: true,
+          executions
         });
       }
 
@@ -486,6 +525,13 @@ function sendJson(res: ServerResponse, statusCode: number, payload: Record<strin
   const body = JSON.stringify(payload);
   res.statusCode = statusCode;
   res.setHeader("content-type", "application/json; charset=utf-8");
+  res.setHeader("content-length", Buffer.byteLength(body));
+  res.end(body);
+}
+
+function sendText(res: ServerResponse, statusCode: number, body: string, contentType: string): void {
+  res.statusCode = statusCode;
+  res.setHeader("content-type", contentType);
   res.setHeader("content-length", Buffer.byteLength(body));
   res.end(body);
 }

@@ -66,6 +66,63 @@ describe("execution api integration", () => {
     }
   });
 
+  test("serves buttons endpoint and UI assets", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json")
+    });
+
+    try {
+      const buttonsResponse = await fetch(`http://127.0.0.1:${server.port}/api/buttons`);
+      expect(buttonsResponse.status).toBe(200);
+      const buttonsPayload = (await buttonsResponse.json()) as {
+        buttons: Array<Record<string, unknown>>;
+      };
+      expect(buttonsPayload.buttons.length).toBeGreaterThan(0);
+      expect(buttonsPayload.buttons[0]?.button_id).toBeTruthy();
+
+      const page = await fetch(`http://127.0.0.1:${server.port}/`);
+      expect(page.status).toBe(200);
+      expect(await page.text()).toContain("Spell Receipts UI");
+
+      const js = await fetch(`http://127.0.0.1:${server.port}/ui/app.js`);
+      expect(js.status).toBe(200);
+      expect(await js.text()).toContain("loadExecutions");
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("GET /api/spell-executions returns execution list", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json")
+    });
+
+    try {
+      const created = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "call_webhook_demo",
+          actor_role: "admin"
+        })
+      });
+      expect(created.status).toBe(202);
+      const createdPayload = (await created.json()) as Record<string, unknown>;
+      const executionId = String(createdPayload.execution_id);
+
+      const listed = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`);
+      expect(listed.status).toBe(200);
+      const payload = (await listed.json()) as {
+        executions: Array<{ execution_id: string }>;
+      };
+      expect(payload.executions.some((execution) => execution.execution_id === executionId)).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
   test("rejects role not in allowed_roles", async () => {
     const server = await startExecutionApiServer({
       port: 0,

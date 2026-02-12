@@ -52,6 +52,13 @@ See sample:
 - `/Users/koichinishizuka/spell-runtime/examples/button-registry.v1.json`
 
 ## 6. Execution API Contract
+## 6.0 Discovery and UI endpoints
+- `GET /api/buttons`
+- `GET /api/spell-executions`
+- `GET /api/spell-executions/:execution_id`
+- `GET /` (minimal receipts UI)
+- `GET /ui/app.js` (UI client script)
+
 ## 6.1 POST /api/spell-executions
 Request body:
 ```json

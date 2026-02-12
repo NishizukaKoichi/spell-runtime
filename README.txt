@@ -148,5 +148,9 @@ Defaults:
 - listens on :8787
 - reads registry: ./examples/button-registry.v1.json
 - routes:
+  GET /
+  GET /ui/app.js
+  GET /api/buttons
+  GET /api/spell-executions
   POST /api/spell-executions
   GET /api/spell-executions/:execution_id
