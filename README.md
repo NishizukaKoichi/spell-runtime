@@ -156,3 +156,17 @@ spell cast samples/call-webhook --dry-run -p event=deploy -p source=manual -p pa
 ## Runtime Decision Log
 
 - `/Users/koichinishizuka/spell-runtime/docs/runtime-decisions-v1.md`
+
+## Execution API (Async)
+
+Start API server:
+
+```bash
+npm run api:dev
+```
+
+By default it listens on `:8787` and reads:
+- button registry: `./examples/button-registry.v1.json`
+- routes:
+  - `POST /api/spell-executions`
+  - `GET /api/spell-executions/:execution_id`

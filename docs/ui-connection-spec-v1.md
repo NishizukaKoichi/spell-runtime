@@ -56,11 +56,12 @@ See sample:
 Request body:
 ```json
 {
-  "button_id": "publish_site_prod",
+  "button_id": "publish_site_high_risk",
   "dry_run": false,
   "input": {
-    "project": "demo"
+    "site_name": "demo"
   },
+  "actor_role": "admin",
   "confirmation": {
     "risk_acknowledged": true,
     "billing_acknowledged": false
@@ -68,14 +69,12 @@ Request body:
 }
 ```
 
-Response (success):
+Response (accepted, async):
 ```json
 {
   "ok": true,
-  "execution_id": "20260211T225556Z_fixtures_hello-host_1.0.0.json",
-  "spell_id": "fixtures/hello-host",
-  "version": "1.0.0",
-  "log_path": "/Users/you/.spell/logs/20260211T225556Z_fixtures_hello-host_1.0.0.json"
+  "execution_id": "exec_1739320000000_ab12cd34",
+  "status": "queued"
 }
 ```
 
@@ -89,11 +88,13 @@ Response (failure):
 ```
 
 ## 6.2 GET /api/spell-executions/:execution_id
-Returns parsed `spell log <execution_id>` JSON content.
+Returns execution summary and sanitized receipt (no raw stdout/stderr).
 
 ## 7. Command Construction Rules
 Given registry entry and request:
 1. Resolve spell id/version from `button_id`.
+   - reject unknown `button_id`
+   - ignore client-provided `spell_id`
 2. Build merged input: `merged = deepMerge(defaults, request.input)`.
 3. Write merged input to temp JSON file.
 4. Build command:
@@ -105,6 +106,7 @@ Given registry entry and request:
 6. Parse stdout lines:
    - `execution_id: ...`
    - `log: ...`
+7. Map runtime output to execution summary and sanitized receipt.
 
 ## 8. Guard Policy Mapping
 ### 8.1 risk guard
@@ -176,7 +178,9 @@ return parseExecution(stdout);
 ## 13. Security Constraints
 - Never allow arbitrary `spell_id` from client without registry lookup.
 - Never pass untrusted shell fragments to command line.
-- Limit input payload size and validate JSON type before writing temp file.
+- Limit input payload size (v1 default: 64KB) and validate JSON type before writing temp file.
+- Limit execution runtime (v1 default: 60s).
+- Apply POST rate limiting (v1 minimal fixed-window limiter).
 - Use per-request temp file and delete after execution when possible.
 - Ensure backend logs redact secrets and tokens.
 

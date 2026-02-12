@@ -139,3 +139,14 @@ Quick try:
 
 13. Runtime decision log
 - /Users/koichinishizuka/spell-runtime/docs/runtime-decisions-v1.md
+
+14. Execution API (async)
+Start:
+  npm run api:dev
+
+Defaults:
+- listens on :8787
+- reads registry: ./examples/button-registry.v1.json
+- routes:
+  POST /api/spell-executions
+  GET /api/spell-executions/:execution_id

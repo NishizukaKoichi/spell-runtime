@@ -17,6 +17,8 @@
   },
   "scripts": {
     "dev": "tsx src/cli/index.ts",
+    "api:dev": "tsx src/api/index.ts",
+    "api:start": "node dist/api/index.js",
     "build": "tsc -p tsconfig.json",
     "prepare": "npm run build",
     "test": "vitest run",
