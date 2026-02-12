@@ -187,9 +187,10 @@ return parseExecution(stdout);
 - Never pass untrusted shell fragments to command line.
 - Limit input payload size (v1 default: 64KB) and validate JSON type before writing temp file.
 - Limit execution runtime (v1 default: 60s).
+- Limit in-flight executions (v1 default: 4).
 - Apply POST rate limiting (v1 minimal fixed-window limiter).
 - Use per-request temp file and delete after execution when possible.
-- Ensure backend logs redact secrets and tokens.
+- Ensure backend logs redact secret keys and env-derived sensitive values.
 
 ## 14. Future Extension Hooks
 - Add queue/async job mode for long-running spells.

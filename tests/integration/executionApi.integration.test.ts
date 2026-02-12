@@ -229,6 +229,31 @@ describe("execution api integration", () => {
       await server.close();
     }
   });
+
+  test("blocks when in-flight concurrency limit is reached", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json"),
+      maxConcurrentExecutions: 0
+    });
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "repo_ops_guarded",
+          actor_role: "admin"
+        })
+      });
+
+      expect(response.status).toBe(429);
+      const payload = (await response.json()) as Record<string, unknown>;
+      expect(payload.error_code).toBe("CONCURRENCY_LIMITED");
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 async function waitForExecution(port: number, executionId: string): Promise<{ execution: Record<string, unknown>; receipt: unknown }> {

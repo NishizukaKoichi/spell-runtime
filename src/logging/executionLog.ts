@@ -3,6 +3,7 @@ import path from "node:path";
 import { ExecutionLog } from "../types";
 import { sanitizeIdForFilename } from "../util/idKey";
 import { ensureSpellDirs, logsRoot } from "../util/paths";
+import { redactSecrets } from "../util/redact";
 
 export function makeExecutionId(id: string, version: string, now = new Date()): string {
   const ts = toTimestamp(now);
@@ -12,7 +13,8 @@ export function makeExecutionId(id: string, version: string, now = new Date()): 
 export async function writeExecutionLog(log: ExecutionLog): Promise<string> {
   await ensureSpellDirs();
   const filePath = path.join(logsRoot(), log.execution_id);
-  await writeFile(filePath, `${JSON.stringify(log, null, 2)}\n`, "utf8");
+  const sanitized = redactSecrets(log);
+  await writeFile(filePath, `${JSON.stringify(sanitized, null, 2)}\n`, "utf8");
   return filePath;
 }
 

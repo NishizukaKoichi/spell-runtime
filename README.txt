@@ -147,6 +147,10 @@ Start:
 Defaults:
 - listens on :8787
 - reads registry: ./examples/button-registry.v1.json
+- limits:
+  - request body: 64KB
+  - execution timeout: 60s
+  - in-flight executions: 4
 - routes:
   GET /
   GET /ui/app.js
@@ -154,3 +158,16 @@ Defaults:
   GET /api/spell-executions
   POST /api/spell-executions
   GET /api/spell-executions/:execution_id
+
+Optional environment variables:
+- SPELL_API_PORT
+- SPELL_BUTTON_REGISTRY_PATH
+- SPELL_API_BODY_LIMIT_BYTES
+- SPELL_API_EXECUTION_TIMEOUT_MS
+- SPELL_API_RATE_LIMIT_WINDOW_MS
+- SPELL_API_RATE_LIMIT_MAX_REQUESTS
+- SPELL_API_MAX_CONCURRENT_EXECUTIONS
+
+Security note:
+- execution logs redact secret-like keys (token, authorization, apiKey, etc.)
+- environment-derived secret values are masked in persisted logs

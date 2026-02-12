@@ -15,6 +15,7 @@ describe("spell cli integration", () => {
     process.env.HOME = tempHome;
     delete process.env.CONNECTOR_GITHUB_TOKEN;
     delete process.env.TEST_HEADER;
+    delete process.env.APP_SECRET;
   });
 
   afterEach(async () => {
@@ -24,6 +25,7 @@ describe("spell cli integration", () => {
     } else {
       process.env.HOME = originalHome;
     }
+    delete process.env.APP_SECRET;
     await rm(tempHome, { recursive: true, force: true });
   });
 
@@ -165,6 +167,37 @@ describe("spell cli integration", () => {
       "site_name=demo"
     ]);
     expect(ok.code).toBe(0);
+  });
+
+  test("execution logs redact sensitive input and env-derived values", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
+
+    process.env.APP_SECRET = "env-secret-value";
+
+    const result = await runCliCapture([
+      "node",
+      "spell",
+      "cast",
+      "fixtures/hello-host",
+      "-p",
+      "name=env-secret-value",
+      "-p",
+      "token=plain-secret"
+    ]);
+    expect(result.code).toBe(0);
+
+    const logsDir = path.join(tempHome, ".spell", "logs");
+    const logs = (await readdir(logsDir)).sort();
+    const lastLog = logs[logs.length - 1];
+    const raw = await readFile(path.join(logsDir, lastLog), "utf8");
+
+    expect(raw).not.toContain("env-secret-value");
+    expect(raw).not.toContain("plain-secret");
+
+    const payload = JSON.parse(raw) as { input: { name: string; token: string } };
+    expect(payload.input.name).toBe("[REDACTED]");
+    expect(payload.input.token).toBe("[REDACTED]");
   });
 });
 

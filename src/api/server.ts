@@ -14,6 +14,7 @@ export interface ExecutionApiServerOptions {
   executionTimeoutMs?: number;
   rateLimitWindowMs?: number;
   rateLimitMaxRequests?: number;
+  maxConcurrentExecutions?: number;
 }
 
 type JobStatus = "queued" | "running" | "succeeded" | "failed" | "timeout";
@@ -55,6 +56,7 @@ const DEFAULT_BODY_LIMIT = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_RATE_WINDOW_MS = 60_000;
 const DEFAULT_RATE_MAX = 20;
+const DEFAULT_MAX_CONCURRENT_EXECUTIONS = 4;
 
 export async function startExecutionApiServer(
   options: ExecutionApiServerOptions = {}
@@ -69,6 +71,7 @@ export async function startExecutionApiServer(
   const executionTimeoutMs = options.executionTimeoutMs ?? DEFAULT_TIMEOUT_MS;
   const rateWindowMs = options.rateLimitWindowMs ?? DEFAULT_RATE_WINDOW_MS;
   const rateMaxRequests = options.rateLimitMaxRequests ?? DEFAULT_RATE_MAX;
+  const maxConcurrentExecutions = options.maxConcurrentExecutions ?? DEFAULT_MAX_CONCURRENT_EXECUTIONS;
 
   const server = createServer(async (req, res) => {
     try {
@@ -91,6 +94,14 @@ export async function startExecutionApiServer(
       }
 
       if (method === "POST" && route === "/spell-executions") {
+        if (countInFlightJobs(jobs) >= maxConcurrentExecutions) {
+          return sendJson(res, 429, {
+            ok: false,
+            error_code: "CONCURRENCY_LIMITED",
+            message: `too many in-flight executions: max ${maxConcurrentExecutions}`
+          });
+        }
+
         const ip = req.socket.remoteAddress ?? "unknown";
         if (!allowRate(ip, postHistoryByIp, rateWindowMs, rateMaxRequests)) {
           return sendJson(res, 429, {
@@ -554,6 +565,16 @@ function allowRate(
   filtered.push(now);
   history.set(ip, filtered);
   return true;
+}
+
+function countInFlightJobs(jobs: Map<string, ExecutionJob>): number {
+  let total = 0;
+  for (const job of jobs.values()) {
+    if (job.status === "queued" || job.status === "running") {
+      total += 1;
+    }
+  }
+  return total;
 }
 
 function deepMerge(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
