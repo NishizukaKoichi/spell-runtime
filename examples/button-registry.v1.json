@@ -1,37 +1,54 @@
-[
-  {
-    "button_id": "hello_dryrun",
-    "label": "Hello (Dry Run)",
-    "description": "Dry run for hello-host fixture",
-    "spell_id": "fixtures/hello-host",
-    "version": "1.0.0",
-    "defaults": {
-      "name": "world"
+{
+  "version": "v1",
+  "buttons": [
+    {
+      "button_id": "call_webhook_demo",
+      "label": "Call Webhook Demo",
+      "description": "Low-risk webhook sample",
+      "spell_id": "samples/call-webhook",
+      "version": "1.0.0",
+      "defaults": {
+        "event": "deploy",
+        "source": "manual",
+        "payload": {
+          "service": "web"
+        }
+      },
+      "required_confirmations": {
+        "risk": false,
+        "billing": false
+      },
+      "allowed_roles": ["admin", "operator"]
     },
-    "requires_yes": false,
-    "requires_allow_billing": false,
-    "allowed_roles": ["admin", "operator"]
-  },
-  {
-    "button_id": "risk_guard_exec",
-    "label": "Risk Guard Execute",
-    "description": "Example requiring explicit risk confirmation",
-    "spell_id": "fixtures/risk-guard",
-    "version": "1.0.0",
-    "defaults": {},
-    "requires_yes": true,
-    "requires_allow_billing": false,
-    "allowed_roles": ["admin"]
-  },
-  {
-    "button_id": "billing_guard_exec",
-    "label": "Billing Guard Execute",
-    "description": "Example requiring billing confirmation",
-    "spell_id": "fixtures/billing-guard",
-    "version": "1.0.0",
-    "defaults": {},
-    "requires_yes": false,
-    "requires_allow_billing": true,
-    "allowed_roles": ["admin"]
-  }
-]
+    {
+      "button_id": "repo_ops_guarded",
+      "label": "Repo Ops (Guarded)",
+      "description": "Permission-token guard sample",
+      "spell_id": "samples/repo-ops",
+      "version": "1.0.0",
+      "defaults": {
+        "branch": "main"
+      },
+      "required_confirmations": {
+        "risk": false,
+        "billing": false
+      },
+      "allowed_roles": ["admin"]
+    },
+    {
+      "button_id": "publish_site_high_risk",
+      "label": "Publish Site (High Risk)",
+      "description": "Risk confirmation sample",
+      "spell_id": "samples/publish-site",
+      "version": "1.0.0",
+      "defaults": {
+        "site_name": "demo"
+      },
+      "required_confirmations": {
+        "risk": true,
+        "billing": false
+      },
+      "allowed_roles": ["admin"]
+    }
+  ]
+}

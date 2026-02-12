@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Button Registry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "buttons"],
+  "properties": {
+    "version": {
+      "const": "v1"
+    },
+    "buttons": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "button_id",
+          "spell_id",
+          "version",
+          "defaults",
+          "required_confirmations",
+          "allowed_roles"
+        ],
+        "properties": {
+          "button_id": { "type": "string", "minLength": 1 },
+          "spell_id": { "type": "string", "minLength": 1 },
+          "version": { "type": "string", "minLength": 1 },
+          "defaults": { "type": "object" },
+          "required_confirmations": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["risk", "billing"],
+            "properties": {
+              "risk": { "type": "boolean" },
+              "billing": { "type": "boolean" }
+            }
+          },
+          "allowed_roles": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "label": { "type": "string" },
+          "description": { "type": "string" },
+          "owners": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  }
+}

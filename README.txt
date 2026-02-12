@@ -116,6 +116,8 @@ Use these effect.type words where possible:
   /Users/koichinishizuka/spell-runtime/docs/ui-connection-spec-v1.md
 - Sample button registry:
   /Users/koichinishizuka/spell-runtime/examples/button-registry.v1.json
+- Button registry schema:
+  /Users/koichinishizuka/spell-runtime/examples/button-registry.v1.schema.json
 
 11. Install from npm
 Global install:

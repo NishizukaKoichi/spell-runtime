@@ -150,6 +150,8 @@ spell cast samples/call-webhook --dry-run -p event=deploy -p source=manual -p pa
   - `/Users/koichinishizuka/spell-runtime/docs/ui-connection-spec-v1.md`
 - Sample button registry:
   - `/Users/koichinishizuka/spell-runtime/examples/button-registry.v1.json`
+- Button registry schema:
+  - `/Users/koichinishizuka/spell-runtime/examples/button-registry.v1.schema.json`
 
 ## Runtime Decision Log
 

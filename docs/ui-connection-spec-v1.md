@@ -35,17 +35,18 @@ Store a static allowlist in backend (JSON, DB, or config service).
 
 Required fields:
 - `button_id`: unique key used by UI
-- `label`: display text
 - `spell_id`: logical spell id (`publisher/spell` style is allowed)
 - `version`: pinned spell version
 - `defaults`: default input object
-- `requires_yes`: if true, backend must add `--yes`
-- `requires_allow_billing`: if true, backend must add `--allow-billing`
+- `required_confirmations`: object with booleans:
+  - `risk`: if true, request must include risk confirmation
+  - `billing`: if true, request must include billing confirmation
+- `allowed_roles`: array of role names
 
 Optional fields:
+- `label`: display text
 - `description`
 - `owners`
-- `allowed_roles`
 
 See sample:
 - `/Users/koichinishizuka/spell-runtime/examples/button-registry.v1.json`
@@ -163,8 +164,8 @@ const args = [
 ];
 
 if (request.dry_run) args.push("--dry-run");
-if (entry.requires_yes && request.confirmation?.risk_acknowledged) args.push("--yes");
-if (entry.requires_allow_billing && request.confirmation?.billing_acknowledged) args.push("--allow-billing");
+if (entry.required_confirmations.risk && request.confirmation?.risk_acknowledged) args.push("--yes");
+if (entry.required_confirmations.billing && request.confirmation?.billing_acknowledged) args.push("--allow-billing");
 
 const { code, stdout, stderr } = await runSpellCli(args);
 if (code !== 0) return mapRuntimeError(stderr);
