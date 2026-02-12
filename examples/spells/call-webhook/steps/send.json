@@ -1,0 +1,12 @@
+{
+  "method": "POST",
+  "url": "https://hooks.example.test/v1/events/{{INPUT.event}}",
+  "headers": {
+    "content-type": "application/json",
+    "x-source": "{{INPUT.source}}"
+  },
+  "body": {
+    "event": "{{INPUT.event}}",
+    "payload": "{{INPUT.payload}}"
+  }
+}

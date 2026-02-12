@@ -107,6 +107,65 @@ describe("spell cli integration", () => {
     const stepOutput = outputs["step.request.json"] as Record<string, unknown>;
     expect(stepOutput.data).toEqual({ id: "abc123" });
   });
+
+  test("real sample: call-webhook succeeds with http checks", async () => {
+    const sample = path.join(process.cwd(), "examples/spells/call-webhook");
+    expect(await runCli(["node", "spell", "install", sample])).toBe(0);
+
+    nock("https://hooks.example.test")
+      .post("/v1/events/deploy", { event: "deploy", payload: { service: "web" } })
+      .matchHeader("x-source", "manual")
+      .reply(200, {
+        status_url: "https://status.example.test/call-webhook/ok",
+        data: { accepted: true }
+      });
+
+    nock("https://status.example.test").get("/call-webhook/ok").reply(200, "ok");
+
+    const result = await runCliCapture([
+      "node",
+      "spell",
+      "cast",
+      "samples/call-webhook",
+      "-p",
+      "event=deploy",
+      "-p",
+      "source=manual",
+      "-p",
+      'payload={"service":"web"}'
+    ]);
+
+    expect(result.code).toBe(0);
+  });
+
+  test("real sample: repo-ops is blocked without connector token", async () => {
+    const sample = path.join(process.cwd(), "examples/spells/repo-ops");
+    expect(await runCli(["node", "spell", "install", sample])).toBe(0);
+
+    const result = await runCliCapture(["node", "spell", "cast", "samples/repo-ops", "-p", "branch=main"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("missing connector token CONNECTOR_GITHUB_TOKEN");
+  });
+
+  test("real sample: publish-site requires --yes then succeeds", async () => {
+    const sample = path.join(process.cwd(), "examples/spells/publish-site");
+    expect(await runCli(["node", "spell", "install", sample])).toBe(0);
+
+    const blocked = await runCliCapture(["node", "spell", "cast", "samples/publish-site", "-p", "site_name=demo"]);
+    expect(blocked.code).toBe(1);
+    expect(blocked.stderr).toContain("risk high requires --yes");
+
+    const ok = await runCliCapture([
+      "node",
+      "spell",
+      "cast",
+      "samples/publish-site",
+      "--yes",
+      "-p",
+      "site_name=demo"
+    ]);
+    expect(ok.code).toBe(0);
+  });
 });
 
 async function runCliCapture(argv: string[]): Promise<{ code: number; stdout: string; stderr: string }> {

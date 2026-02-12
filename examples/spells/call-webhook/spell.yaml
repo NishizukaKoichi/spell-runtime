@@ -1,0 +1,40 @@
+id: samples/call-webhook
+version: 1.0.0
+name: Call Webhook
+summary: Send a webhook with templated payload and validate callback health
+inputs_schema: ./schema.json
+risk: low
+permissions: []
+effects:
+  - type: notify
+    target: webhook
+    mutates: false
+billing:
+  enabled: false
+  mode: none
+  currency: USD
+  max_amount: 0
+runtime:
+  execution: host
+  platforms:
+    - darwin/arm64
+    - darwin/x64
+    - linux/amd64
+    - linux/arm64
+    - win32/x64
+steps:
+  - uses: http
+    name: send
+    run: steps/send.json
+checks:
+  - type: exit_code
+    params: {}
+  - type: http_status
+    params:
+      expect: 200
+      url_from_output: step.send.json.status_url
+  - type: jsonpath_equals
+    params:
+      from_output: step.send.json
+      path: data.accepted
+      expected: true

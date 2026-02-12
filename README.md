@@ -128,9 +128,29 @@ spell cast fixtures/hello-host -p name=world
 spell log <execution-id>
 ```
 
+## Real-Use Sample Spells
+
+These are product-facing examples (separate from test fixtures):
+
+- `/Users/koichinishizuka/spell-runtime/examples/spells/call-webhook`
+- `/Users/koichinishizuka/spell-runtime/examples/spells/repo-ops`
+- `/Users/koichinishizuka/spell-runtime/examples/spells/publish-site`
+
+Quick try:
+
+```bash
+spell install ./examples/spells/call-webhook
+spell inspect samples/call-webhook
+spell cast samples/call-webhook --dry-run -p event=deploy -p source=manual -p payload='{"service":"web"}'
+```
+
 ## UI Connection Spec
 
 - Decision-complete button integration spec:
   - `/Users/koichinishizuka/spell-runtime/docs/ui-connection-spec-v1.md`
 - Sample button registry:
   - `/Users/koichinishizuka/spell-runtime/examples/button-registry.v1.json`
+
+## Runtime Decision Log
+
+- `/Users/koichinishizuka/spell-runtime/docs/runtime-decisions-v1.md`

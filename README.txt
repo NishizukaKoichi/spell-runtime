@@ -124,3 +124,16 @@ Global install:
 
 Run with npx:
   npx --yes --package spell-runtime spell --help
+
+12. Real-use sample spells
+- /Users/koichinishizuka/spell-runtime/examples/spells/call-webhook
+- /Users/koichinishizuka/spell-runtime/examples/spells/repo-ops
+- /Users/koichinishizuka/spell-runtime/examples/spells/publish-site
+
+Quick try:
+  spell install ./examples/spells/call-webhook
+  spell inspect samples/call-webhook
+  spell cast samples/call-webhook --dry-run -p event=deploy -p source=manual -p payload='{"service":"web"}'
+
+13. Runtime decision log
+- /Users/koichinishizuka/spell-runtime/docs/runtime-decisions-v1.md
