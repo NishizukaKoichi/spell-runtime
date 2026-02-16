@@ -63,12 +63,15 @@ Cast performs these checks before execution:
 If --dry-run is set, command exits after summary and validation.
 
 5. Runtime model
-v1 supports host execution only.
+v1 supports:
 - host: steps run in order, shell/http supported.
-- docker: explicitly unsupported in v1 and fails with a clear error.
+- docker: steps run in a linux container via "runner-in-image".
 
-Future docker direction:
-- docker image contains spell-runner and executes bundle in container.
+Docker mode (v1) details:
+- runtime.execution=docker requires runtime.docker_image.
+- the image must provide spell-runner on PATH (this repo publishes it as a second npm bin).
+- the bundle is mounted read-only at /spell; the runner copies it into a writable temp workdir before executing steps.
+- env vars passed from host -> container are restricted to connector tokens only (CONNECTOR_<NAME>_TOKEN). If your spell needs {{ENV.*}} for other values, provide them inside the image (or extend the runtime later).
 
 6. Windows policy
 - host mode does not assume bash/sh.
@@ -90,7 +93,7 @@ Use these effect.type words where possible:
 - real billing execution (Stripe)
 - DAG/parallel/rollback/self-healing
 - advanced templating language (only {{INPUT.*}} and {{ENV.*}})
-- docker step execution runtime
+- docker env passthrough beyond connector tokens
 
 9. Example flow
 1) Install a local fixture

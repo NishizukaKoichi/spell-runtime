@@ -10,7 +10,8 @@
     "LICENSE"
   ],
   "bin": {
-    "spell": "dist/cli/index.js"
+    "spell": "dist/cli/index.js",
+    "spell-runner": "dist/runner/spell-runner.js"
   },
   "engines": {
     "node": ">=20"

@@ -17,8 +17,10 @@ This document records stable architecture decisions for Spell Runtime v1.
 - name lookup and ambiguous resolution are intentionally out of scope.
 
 ## 4. Runtime execution policy
-- v1 runtime is completed for `host` execution.
-- `docker` execution is explicit not-supported error in v1.
+- v1 runtime supports `host` execution and `docker` execution.
+- docker execution is "runner-in-image": host `spell` runs `docker run <image> spell-runner ...`.
+- the bundle is mounted read-only and copied to a writable temp workdir inside the container before executing steps.
+- env passthrough is restricted to connector tokens (`CONNECTOR_<NAME>_TOKEN`) by default.
 
 ## 5. Button contract boundary
 - clients should send `button_id` only.

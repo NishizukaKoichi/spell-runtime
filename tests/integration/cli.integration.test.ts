@@ -1,6 +1,7 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import nock from "nock";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { runCli } from "../../src/cli/index";
@@ -199,6 +200,120 @@ describe("spell cli integration", () => {
     expect(payload.input.name).toBe("[REDACTED]");
     expect(payload.input.token).toBe("[REDACTED]");
   });
+
+  const dockerTest = process.env.SPELL_DOCKER_TESTS === "1" ? test : test.skip;
+  dockerTest("docker execution succeeds (runner-in-image)", async () => {
+    const repoRoot = process.cwd();
+
+    // Build and pack this repo so a Docker image can install spell-runner.
+    await runCommand("npm", ["run", "build"], repoRoot);
+
+    const packDir = await mkdtemp(path.join(tmpdir(), "spell-pack-"));
+    const packed = await runCommand("npm", ["pack", "--silent", "--pack-destination", packDir], repoRoot);
+    const tgzName = packed.stdout.trim().split(/\s+/).pop();
+    if (!tgzName) {
+      throw new Error("npm pack produced no output");
+    }
+    const tgzPath = path.join(packDir, tgzName);
+
+    const dockerContext = await mkdtemp(path.join(tmpdir(), "spell-docker-context-"));
+    const imageTag = `spell-runtime-test-runner:${Date.now()}`;
+
+    try {
+      await copyFile(tgzPath, path.join(dockerContext, "spell-runtime.tgz"));
+      await writeFile(
+        path.join(dockerContext, "Dockerfile"),
+        [
+          "FROM node:20-slim",
+          "COPY spell-runtime.tgz /tmp/spell-runtime.tgz",
+          "RUN npm i -g /tmp/spell-runtime.tgz && rm /tmp/spell-runtime.tgz",
+          ""
+        ].join("\n"),
+        "utf8"
+      );
+
+      await runCommand("docker", ["build", "-t", imageTag, dockerContext], repoRoot);
+
+      // Create a minimal docker-executed spell bundle.
+      const spellDir = await mkdtemp(path.join(tmpdir(), "spell-docker-bundle-"));
+      const stepsDir = path.join(spellDir, "steps");
+      await mkdir(stepsDir, { recursive: true });
+
+      await writeFile(
+        path.join(spellDir, "spell.yaml"),
+        [
+          "id: tests/docker-hello",
+          "version: 1.0.0",
+          "name: Docker Hello",
+          "summary: minimal docker runner success case",
+          "inputs_schema: ./schema.json",
+          "risk: low",
+          "permissions: []",
+          "effects:",
+          "  - type: notify",
+          "    target: stdout",
+          "    mutates: false",
+          "billing:",
+          "  enabled: false",
+          "  mode: none",
+          "  currency: USD",
+          "  max_amount: 0",
+          "runtime:",
+          "  execution: docker",
+          "  docker_image: " + imageTag,
+          "  platforms:",
+          "    - linux/amd64",
+          "    - linux/arm64",
+          "steps:",
+          "  - uses: shell",
+          "    name: hello",
+          "    run: steps/hello.js",
+          "checks:",
+          "  - type: exit_code",
+          "    params: {}",
+          ""
+        ].join("\n"),
+        "utf8"
+      );
+
+      await writeFile(
+        path.join(spellDir, "schema.json"),
+        JSON.stringify(
+          {
+            $schema: "https://json-schema.org/draft/2020-12/schema",
+            type: "object",
+            properties: { name: { type: "string" } },
+            required: ["name"],
+            additionalProperties: true
+          },
+          null,
+          2
+        ) + "\n",
+        "utf8"
+      );
+
+      const stepPath = path.join(stepsDir, "hello.js");
+      await writeFile(stepPath, '#!/usr/bin/env node\nprocess.stdout.write("hello-docker\\n");\n', "utf8");
+      await chmod(stepPath, 0o755);
+
+      expect(await runCli(["node", "spell", "install", spellDir])).toBe(0);
+
+      const result = await runCliCapture(["node", "spell", "cast", "tests/docker-hello", "-p", "name=world"]);
+      expect(result.code).toBe(0);
+
+      const logsDir = path.join(tempHome, ".spell", "logs");
+      const logs = (await readdir(logsDir)).sort();
+      const lastLog = logs[logs.length - 1];
+      const payload = JSON.parse(await readFile(path.join(logsDir, lastLog), "utf8")) as Record<string, unknown>;
+
+      const outputs = payload.outputs as Record<string, unknown>;
+      expect(String(outputs["step.hello.stdout"] ?? "")).toContain("hello-docker");
+    } finally {
+      await rm(packDir, { recursive: true, force: true });
+      await rm(dockerContext, { recursive: true, force: true });
+      await runCommand("docker", ["rmi", "-f", imageTag], repoRoot).catch(() => undefined);
+    }
+  });
 });
 
 async function runCliCapture(argv: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -225,4 +340,34 @@ async function runCliCapture(argv: string[]): Promise<{ code: number; stdout: st
     process.stdout.write = writeOut;
     process.stderr.write = writeErr;
   }
+}
+
+async function runCommand(
+  command: string,
+  args: string[],
+  cwd: string
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const child = spawn(command, args, { shell: false, cwd, env: process.env });
+
+  let stdout = "";
+  let stderr = "";
+
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  const code = await new Promise<number>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (exitCode) => resolve(exitCode ?? 1));
+  });
+
+  if (code !== 0) {
+    const detail = stderr.trim() || stdout.trim() || `${command} exited with code ${code}`;
+    throw new Error(detail);
+  }
+
+  return { code, stdout, stderr };
 }

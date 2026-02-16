@@ -4,9 +4,10 @@ import { readSchemaFromManifest, resolveInstalledBundle } from "../bundle/store"
 import { writeExecutionLog, makeExecutionId } from "../logging/executionLog";
 import { CastOptions, ExecutionLog } from "../types";
 import { SpellError } from "../util/errors";
-import { detectHostPlatform } from "../util/platform";
+import { detectDockerPlatformForHost, detectHostPlatform, platformMatches } from "../util/platform";
 import { buildInput, validateInputAgainstSchema } from "./input";
 import { runHost } from "./hostRunner";
+import { runDocker } from "./dockerRunner";
 import { renderExecutionSummary } from "./summary";
 
 export interface CastResult {
@@ -68,9 +69,12 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
     validateInputAgainstSchema(schema, input);
 
     const hostPlatform = detectHostPlatform();
-    if (!manifest.runtime.platforms.includes(hostPlatform)) {
+    const dockerPlatform = detectDockerPlatformForHost();
+    const platformTarget = manifest.runtime.execution === "docker" ? dockerPlatform : hostPlatform;
+    const platformOk = platformMatches(manifest.runtime.platforms, platformTarget);
+    if (!platformOk) {
       throw new SpellError(
-        `platform mismatch: host=${hostPlatform}, spell supports=${manifest.runtime.platforms.join(",")}`
+        `platform mismatch: host=${hostPlatform}, runtime=${manifest.runtime.execution}, target=${platformTarget}, spell supports=${manifest.runtime.platforms.join(",")}`
       );
     }
 
@@ -103,7 +107,22 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
     }
 
     if (manifest.runtime.execution === "docker") {
-      throw new SpellError("docker execution is not supported in v1");
+      logger.debug({ id: manifest.id, version: manifest.version }, "starting docker execution");
+
+      const dockerResult = await runDocker(manifest, bundlePath, input);
+      log.steps = dockerResult.stepResults;
+      log.outputs = dockerResult.outputs;
+      log.checks = dockerResult.checks;
+
+      log.success = true;
+      log.finished_at = new Date().toISOString();
+      const logPath = await writeExecutionLog(log);
+
+      return {
+        executionId,
+        logPath,
+        outputs: dockerResult.outputs
+      };
     }
 
     logger.debug({ id: manifest.id, version: manifest.version }, "starting host execution");
