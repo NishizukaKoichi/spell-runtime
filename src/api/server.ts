@@ -970,10 +970,6 @@ async function applyLogRetentionPolicy(
     });
   }
 
-  if (candidates.length === 0) {
-    return false;
-  }
-
   const toDelete = new Set<string>();
 
   if (logRetentionDays > 0) {
@@ -995,17 +991,16 @@ async function applyLogRetentionPolicy(
     }
   }
 
-  if (toDelete.size === 0) {
-    return false;
-  }
-
   let changed = false;
-  for (const fileName of toDelete) {
-    const removed = await rm(path.join(logsDirectory, fileName), { force: true })
-      .then(() => true)
-      .catch(() => false);
-    if (removed) {
-      changed = true;
+
+  if (toDelete.size > 0) {
+    for (const fileName of toDelete) {
+      const removed = await rm(path.join(logsDirectory, fileName), { force: true })
+        .then(() => true)
+        .catch(() => false);
+      if (removed) {
+        changed = true;
+      }
     }
   }
 
@@ -1036,6 +1031,16 @@ async function applyLogRetentionPolicy(
     }
   }
 
+  const retainedLogPaths = new Set<string>();
+  for (const job of jobsList) {
+    if (jobIdsToDelete.has(job.execution_id)) {
+      continue;
+    }
+    if (job.runtime_log_path) {
+      retainedLogPaths.add(job.runtime_log_path);
+    }
+  }
+
   for (const executionId of jobIdsToDelete) {
     const job = jobs.get(executionId);
     if (!job) {
@@ -1043,7 +1048,11 @@ async function applyLogRetentionPolicy(
     }
 
     if (job.runtime_log_path) {
-      await rm(job.runtime_log_path, { force: true }).catch(() => undefined);
+      // A runtime log path can (rarely) be shared if the runtime execution id collides.
+      // Do not delete a log file that is still referenced by a retained job.
+      if (!retainedLogPaths.has(job.runtime_log_path)) {
+        await rm(job.runtime_log_path, { force: true }).catch(() => undefined);
+      }
     }
 
     jobs.delete(executionId);
