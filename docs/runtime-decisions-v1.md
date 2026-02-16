@@ -48,8 +48,11 @@ v1 intentionally excludes:
 - advanced template language
 
 ## 10. Execution API auth and retention controls
-- API authentication is opt-in via token configuration (`SPELL_API_AUTH_TOKENS`).
+- API authentication is opt-in via:
+  - `SPELL_API_AUTH_KEYS` (recommended, role-bound)
+  - `SPELL_API_AUTH_TOKENS` (legacy, role-unbound)
 - when configured, all `/api/*` routes require bearer/api-key token.
+- when using `SPELL_API_AUTH_KEYS`, `actor_role` is derived from the auth token role (client-supplied role is ignored).
 - execution log inventory is persisted in `~/.spell/logs/index.json`.
 - retention is controlled by:
   - age (`SPELL_API_LOG_RETENTION_DAYS`, default 14)

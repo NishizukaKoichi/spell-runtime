@@ -99,6 +99,7 @@ Returns execution summary and sanitized receipt (no raw stdout/stderr).
 
 Execution list state is persisted at `~/.spell/logs/index.json` so lists survive API restarts.
 When API auth is enabled, all `/api/*` endpoints require `Authorization: Bearer <token>` (or `x-api-key`).
+Recommended auth configuration uses `SPELL_API_AUTH_KEYS` (role-bound keys) so UI cannot self-assert `actor_role`.
 
 ## 7. Command Construction Rules
 Given registry entry and request:

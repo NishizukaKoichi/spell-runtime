@@ -251,6 +251,50 @@ describe("execution api integration", () => {
     }
   });
 
+  test("enforces role-based auth keys and derives actor_role from token", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json"),
+      authKeys: ["operator=op-token", "admin=admin-token"]
+    });
+
+    try {
+      const unauthorized = await fetch(`http://127.0.0.1:${server.port}/api/buttons`);
+      expect(unauthorized.status).toBe(401);
+
+      const forbidden = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer op-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "publish_site_high_risk",
+          actor_role: "admin",
+          dry_run: true
+        })
+      });
+      expect(forbidden.status).toBe(403);
+      const forbiddenPayload = (await forbidden.json()) as Record<string, unknown>;
+      expect(forbiddenPayload.error_code).toBe("ROLE_NOT_ALLOWED");
+
+      const created = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer op-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "call_webhook_demo",
+          actor_role: "admin",
+          dry_run: true
+        })
+      });
+      expect(created.status).toBe(202);
+      const createdPayload = (await created.json()) as Record<string, unknown>;
+      const executionId = String(createdPayload.execution_id);
+
+      const done = await waitForExecution(server.port, executionId, "op-token");
+      expect(done.execution.actor_role).toBe("operator");
+    } finally {
+      await server.close();
+    }
+  });
+
   test("applies log retention max-files policy and prunes execution index", async () => {
     const server = await startExecutionApiServer({
       port: 0,
@@ -423,11 +467,17 @@ describe("execution api integration", () => {
   });
 });
 
-async function waitForExecution(port: number, executionId: string): Promise<{ execution: Record<string, unknown>; receipt: unknown }> {
+async function waitForExecution(
+  port: number,
+  executionId: string,
+  token?: string
+): Promise<{ execution: Record<string, unknown>; receipt: unknown }> {
   const deadline = Date.now() + 8_000;
 
   while (Date.now() < deadline) {
-    const response = await fetch(`http://127.0.0.1:${port}/api/spell-executions/${executionId}`);
+    const response = await fetch(`http://127.0.0.1:${port}/api/spell-executions/${executionId}`, {
+      headers: token ? { authorization: `Bearer ${token}` } : undefined
+    });
     if (response.status === 200) {
       const payload = (await response.json()) as { execution: Record<string, unknown>; receipt: unknown };
       const status = payload.execution.status;

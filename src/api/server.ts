@@ -17,11 +17,17 @@ export interface ExecutionApiServerOptions {
   rateLimitMaxRequests?: number;
   maxConcurrentExecutions?: number;
   authTokens?: string[];
+  authKeys?: string[];
   logRetentionDays?: number;
   logMaxFiles?: number;
 }
 
 type JobStatus = "queued" | "running" | "succeeded" | "failed" | "timeout";
+
+interface ApiAuthKey {
+  role: string;
+  token: string;
+}
 
 interface ExecutionJob {
   execution_id: string;
@@ -109,6 +115,10 @@ export async function startExecutionApiServer(
   const authTokens = new Set(
     (options.authTokens ?? []).map((token) => token.trim()).filter((token) => token.length > 0)
   );
+  const authKeys = parseAuthKeys(options.authKeys ?? []);
+  if (authTokens.size > 0 && authKeys.length > 0) {
+    throw new Error("API auth config error: use either authTokens or authKeys (role-based), not both");
+  }
   const logRetentionDays = options.logRetentionDays ?? DEFAULT_LOG_RETENTION_DAYS;
   const logMaxFiles = options.logMaxFiles ?? DEFAULT_LOG_MAX_FILES;
   const logsDirectory = logsRoot();
@@ -139,13 +149,15 @@ export async function startExecutionApiServer(
         return sendJson(res, 200, { ok: true });
       }
 
+      const authContext =
+        requiresApiAuth(route) ? authorizeRequest(req, authTokens, authKeys) : ({ ok: true } as const);
+
       if (requiresApiAuth(route)) {
-        const auth = authorizeRequest(req, authTokens);
-        if (!auth.ok) {
+        if (!authContext.ok) {
           return sendJson(res, 401, {
             ok: false,
-            error_code: auth.errorCode,
-            message: auth.message
+            error_code: authContext.errorCode,
+            message: authContext.message
           });
         }
       }
@@ -197,7 +209,11 @@ export async function startExecutionApiServer(
           });
         }
 
-        const actorRole = parsed.actor_role ?? req.headers["x-role"]?.toString() ?? "anonymous";
+        const actorRole =
+          ("role" in authContext ? authContext.role : undefined) ??
+          parsed.actor_role ??
+          req.headers["x-role"]?.toString() ??
+          "anonymous";
         if (!entry.allowed_roles.includes(actorRole)) {
           return sendJson(res, 403, {
             ok: false,
@@ -745,15 +761,26 @@ function requiresApiAuth(route: string): boolean {
 
 function authorizeRequest(
   req: IncomingMessage,
-  authTokens: Set<string>
-): { ok: true } | { ok: false; errorCode: string; message: string } {
-  if (authTokens.size === 0) {
+  authTokens: Set<string>,
+  authKeys: ApiAuthKey[]
+): { ok: true; role?: string } | { ok: false; errorCode: string; message: string } {
+  if (authTokens.size === 0 && authKeys.length === 0) {
     return { ok: true };
   }
 
   const token = readAuthToken(req);
   if (!token) {
     return { ok: false, errorCode: "AUTH_REQUIRED", message: "authorization token is required" };
+  }
+
+  if (authKeys.length > 0) {
+    for (const key of authKeys) {
+      if (secureTokenEquals(key.token, token)) {
+        return { ok: true, role: key.role };
+      }
+    }
+
+    return { ok: false, errorCode: "AUTH_INVALID", message: "invalid authorization token" };
   }
 
   for (const expectedToken of authTokens) {
@@ -763,6 +790,43 @@ function authorizeRequest(
   }
 
   return { ok: false, errorCode: "AUTH_INVALID", message: "invalid authorization token" };
+}
+
+function parseAuthKeys(entries: string[]): ApiAuthKey[] {
+  const out: ApiAuthKey[] = [];
+  const seenTokens = new Set<string>();
+
+  for (const raw of entries) {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const delimiter = trimmed.includes("=") ? "=" : ":";
+    const idx = trimmed.indexOf(delimiter);
+    if (idx <= 0 || idx >= trimmed.length - 1) {
+      throw new Error(`invalid auth key entry: ${trimmed}`);
+    }
+
+    const role = trimmed.slice(0, idx).trim();
+    const token = trimmed.slice(idx + 1).trim();
+
+    if (!role || !/^[a-zA-Z0-9_-]{1,64}$/.test(role)) {
+      throw new Error(`invalid auth key role: ${role || "(empty)"}`);
+    }
+    if (!token) {
+      throw new Error(`invalid auth key token: ${role} has empty token`);
+    }
+
+    if (seenTokens.has(token)) {
+      throw new Error(`duplicate auth key token configured for role: ${role}`);
+    }
+    seenTokens.add(token);
+
+    out.push({ role, token });
+  }
+
+  return out;
 }
 
 function readAuthToken(req: IncomingMessage): string | null {

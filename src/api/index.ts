@@ -9,6 +9,7 @@ async function main(): Promise<void> {
   const rateLimitMaxRequests = readOptionalIntegerEnv("SPELL_API_RATE_LIMIT_MAX_REQUESTS", 1);
   const maxConcurrentExecutions = readOptionalIntegerEnv("SPELL_API_MAX_CONCURRENT_EXECUTIONS", 0);
   const authTokens = readOptionalCsvEnv("SPELL_API_AUTH_TOKENS");
+  const authKeys = readOptionalCsvEnv("SPELL_API_AUTH_KEYS");
   const logRetentionDays = readOptionalIntegerEnv("SPELL_API_LOG_RETENTION_DAYS", 0);
   const logMaxFiles = readOptionalIntegerEnv("SPELL_API_LOG_MAX_FILES", 0);
 
@@ -21,6 +22,7 @@ async function main(): Promise<void> {
     rateLimitMaxRequests,
     maxConcurrentExecutions,
     authTokens,
+    authKeys,
     logRetentionDays,
     logMaxFiles
   });

@@ -163,7 +163,8 @@ Defaults:
 Optional environment variables:
 - SPELL_API_PORT
 - SPELL_BUTTON_REGISTRY_PATH
-- SPELL_API_AUTH_TOKENS (comma-separated tokens; when set, /api/* requires auth)
+- SPELL_API_AUTH_KEYS (comma-separated role=token entries; when set, /api/* requires auth and derives actor_role from token)
+- SPELL_API_AUTH_TOKENS (legacy: comma-separated tokens; when set, /api/* requires auth but does not bind role)
 - SPELL_API_BODY_LIMIT_BYTES
 - SPELL_API_EXECUTION_TIMEOUT_MS
 - SPELL_API_RATE_LIMIT_WINDOW_MS
@@ -176,3 +177,4 @@ Security note:
 - execution logs redact secret-like keys (token, authorization, apiKey, etc.)
 - environment-derived secret values are masked in persisted logs
 - when auth is enabled, pass Authorization: Bearer <token> (or x-api-key) for /api routes
+- do not set both SPELL_API_AUTH_KEYS and SPELL_API_AUTH_TOKENS at the same time
