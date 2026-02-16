@@ -1,0 +1,149 @@
+import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { generateKeyPairSync, sign } from "node:crypto";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { computeBundleDigest } from "../../src/signature/bundleDigest";
+import { upsertTrustedPublisherKey } from "../../src/signature/trustStore";
+import { verifyBundleSignature } from "../../src/signature/verify";
+import { loadManifestFromDir } from "../../src/bundle/manifest";
+
+describe("signature", () => {
+  let originalHome: string | undefined;
+  let tempHome: string;
+
+  beforeEach(async () => {
+    originalHome = process.env.HOME;
+    tempHome = await mkdtemp(path.join(tmpdir(), "spell-sig-home-"));
+    process.env.HOME = tempHome;
+  });
+
+  afterEach(async () => {
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    await rm(tempHome, { recursive: true, force: true });
+  });
+
+  test("computeBundleDigest is deterministic and changes on file content", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "spell-digest-"));
+
+    try {
+      await mkdir(path.join(dir, "steps"), { recursive: true });
+      await writeFile(path.join(dir, "spell.yaml"), "id: pub/digest\nversion: 1.0.0\nname: x\nsummary: x\ninputs_schema: ./schema.json\nrisk: low\npermissions: []\neffects: []\nbilling:\n  enabled: false\n  mode: none\n  currency: USD\n  max_amount: 0\nruntime:\n  execution: host\n  platforms: [darwin/arm64]\nsteps:\n  - uses: shell\n    name: s\n    run: steps/s.js\nchecks:\n  - type: exit_code\n    params: {}\n", "utf8");
+      await writeFile(path.join(dir, "schema.json"), "{\"type\":\"object\"}\n", "utf8");
+      await writeFile(path.join(dir, "steps", "s.js"), "console.log('a')\n", "utf8");
+
+      const first = await computeBundleDigest(dir);
+      const second = await computeBundleDigest(dir);
+      expect(first.valueHex).toBe(second.valueHex);
+
+      await writeFile(path.join(dir, "steps", "s.js"), "console.log('b')\n", "utf8");
+      const third = await computeBundleDigest(dir);
+      expect(third.valueHex).not.toBe(first.valueHex);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("verifyBundleSignature succeeds with trusted key and matching digest", async () => {
+    const bundleDir = await mkdtemp(path.join(tmpdir(), "spell-signed-bundle-"));
+
+    try {
+      const publisher = "pub";
+      const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+      const publicKeyDer = publicKey.export({ format: "der", type: "spki" }) as Buffer;
+
+      await upsertTrustedPublisherKey(publisher, {
+        key_id: "default",
+        algorithm: "ed25519",
+        public_key: publicKeyDer.toString("base64url")
+      });
+
+      await mkdir(path.join(bundleDir, "steps"), { recursive: true });
+
+      const stepPath = path.join(bundleDir, "steps", "hello.js");
+      await writeFile(stepPath, "#!/usr/bin/env node\nprocess.stdout.write('hello\\n');\n", "utf8");
+      await chmod(stepPath, 0o755);
+
+      await writeFile(
+        path.join(bundleDir, "schema.json"),
+        JSON.stringify(
+          {
+            $schema: "https://json-schema.org/draft/2020-12/schema",
+            type: "object",
+            properties: { name: { type: "string" } },
+            required: ["name"],
+            additionalProperties: true
+          },
+          null,
+          2
+        ) + "\n",
+        "utf8"
+      );
+
+      await writeFile(
+        path.join(bundleDir, "spell.yaml"),
+        [
+          "id: pub/signed",
+          "version: 1.0.0",
+          "name: Signed",
+          "summary: signed bundle",
+          "inputs_schema: ./schema.json",
+          "risk: low",
+          "permissions: []",
+          "effects: []",
+          "billing:",
+          "  enabled: false",
+          "  mode: none",
+          "  currency: USD",
+          "  max_amount: 0",
+          "runtime:",
+          "  execution: host",
+          "  platforms:",
+          "    - darwin/arm64",
+          "steps:",
+          "  - uses: shell",
+          "    name: hello",
+          "    run: steps/hello.js",
+          "checks:",
+          "  - type: exit_code",
+          "    params: {}",
+          ""
+        ].join("\n"),
+        "utf8"
+      );
+
+      const digest = await computeBundleDigest(bundleDir);
+      const signature = sign(null, digest.value, privateKey);
+
+      await writeFile(
+        path.join(bundleDir, "spell.sig.json"),
+        JSON.stringify(
+          {
+            version: "v1",
+            publisher,
+            key_id: "default",
+            algorithm: "ed25519",
+            digest: { algorithm: "sha256", value: digest.valueHex },
+            signature: signature.toString("base64url")
+          },
+          null,
+          2
+        ) + "\n",
+        "utf8"
+      );
+
+      const { manifest } = await loadManifestFromDir(bundleDir);
+      const result = await verifyBundleSignature(manifest, bundleDir);
+      expect(result.ok).toBe(true);
+      expect(result.status).toBe("verified");
+      expect(result.publisher).toBe(publisher);
+    } finally {
+      await rm(bundleDir, { recursive: true, force: true });
+    }
+  });
+});
+

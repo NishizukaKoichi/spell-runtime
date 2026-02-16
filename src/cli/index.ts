@@ -1,10 +1,12 @@
 #!/usr/bin/env node
+import { createPublicKey } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { Command } from "commander";
 import { installBundle } from "../bundle/install";
 import { listInstalledSpells, readSchemaFromManifest, resolveInstalledBundle, summarizeSchema } from "../bundle/store";
 import { castSpell } from "../runner/cast";
+import { listTrustedPublishers, removeTrustedPublisher, upsertTrustedPublisherKey } from "../signature/trustStore";
 import { SpellError } from "../util/errors";
 import { logsRoot } from "../util/paths";
 
@@ -103,6 +105,7 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
     .option("--dry-run", "Validate and summarize only", false)
     .option("--yes", "Acknowledge high or critical risk", false)
     .option("--allow-billing", "Allow billing-enabled spells", false)
+    .option("--require-signature", "Require verified signature", false)
     .option("--verbose", "Verbose logs", false)
     .option("--profile <name>", "Reserved for future use")
     .action(
@@ -115,6 +118,7 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
           dryRun: boolean;
           yes: boolean;
           allowBilling: boolean;
+          requireSignature: boolean;
           verbose: boolean;
           profile?: string;
         }
@@ -127,6 +131,7 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
           dryRun: options.dryRun,
           yes: options.yes,
           allowBilling: options.allowBilling,
+          requireSignature: options.requireSignature,
           verbose: options.verbose,
           profile: options.profile
         });
@@ -135,6 +140,61 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
         process.stdout.write(`log: ${result.logPath}\n`);
       }
     );
+
+  const trust = program.command("trust").description("Manage trusted publisher keys");
+
+  trust
+    .command("add")
+    .description("Add or update a trusted publisher public key")
+    .argument("<publisher>", "Publisher (id prefix before first slash)")
+    .argument("<public-key>", "ed25519 public key (spki der) as base64url")
+    .option("--key-id <id>", "Key id", "default")
+    .action(async (publisher: string, publicKey: string, options: { keyId: string }) => {
+      const trimmed = publicKey.trim();
+      try {
+        const der = Buffer.from(trimmed, "base64url");
+        createPublicKey({ key: der, format: "der", type: "spki" });
+      } catch (error) {
+        throw new SpellError(`invalid public key: ${(error as Error).message}`);
+      }
+
+      await upsertTrustedPublisherKey(publisher, {
+        key_id: options.keyId,
+        algorithm: "ed25519",
+        public_key: trimmed
+      });
+
+      process.stdout.write(`trusted publisher=${publisher} key_id=${options.keyId}\n`);
+    });
+
+  trust
+    .command("list")
+    .description("List trusted publishers")
+    .action(async () => {
+      const publishers = await listTrustedPublishers();
+      if (publishers.length === 0) {
+        process.stdout.write("No trusted publishers\n");
+        return;
+      }
+
+      process.stdout.write("publisher\tkey_ids\n");
+      for (const entry of publishers) {
+        const ids = entry.keys.map((k) => k.key_id).sort().join(",");
+        process.stdout.write(`${entry.publisher}\t${ids}\n`);
+      }
+    });
+
+  trust
+    .command("remove")
+    .description("Remove a trusted publisher (all keys)")
+    .argument("<publisher>", "Publisher")
+    .action(async (publisher: string) => {
+      const removed = await removeTrustedPublisher(publisher);
+      if (!removed) {
+        throw new SpellError(`trusted publisher not found: ${publisher}`);
+      }
+      process.stdout.write(`removed publisher=${publisher}\n`);
+    });
 
   program
     .command("log")

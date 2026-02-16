@@ -46,7 +46,10 @@ npm run smoke:npx
 - `spell install <local-path>`
 - `spell list`
 - `spell inspect <id> [--version x.y.z]`
-- `spell cast <id> [--version x.y.z] [-p key=value ...] [--input input.json] [--dry-run] [--yes] [--allow-billing] [--verbose] [--profile <name>]`
+- `spell cast <id> [--version x.y.z] [-p key=value ...] [--input input.json] [--dry-run] [--yes] [--allow-billing] [--require-signature] [--verbose] [--profile <name>]`
+- `spell trust add <publisher> <public-key> [--key-id default]`
+- `spell trust list`
+- `spell trust remove <publisher>`
 - `spell log <execution-id>`
 
 ## Storage Layout
@@ -72,6 +75,7 @@ Consistency rule:
 - bundle resolution by id (and optional version)
 - input assembly (`--input` + `-p` overrides)
 - JSON Schema validation by Ajv
+- optional signature verification (`--require-signature`)
 - platform guard
 - risk guard (`high`/`critical` requires `--yes`)
 - billing guard (`billing.enabled` requires `--allow-billing`)
@@ -114,11 +118,31 @@ Use these `effect.type` words where possible:
 ## v1 Limitations (Intentionally Not Implemented)
 
 - name search or ambiguous resolution (id only)
-- registry/marketplace/signature enforcement/license verification
+- registry/marketplace/license verification
+- signature signing UX (keygen/sign commands)
 - real billing execution (Stripe)
 - DAG/parallel/rollback/self-healing
 - advanced templating language (only `{{INPUT.*}}` and `{{ENV.*}}`)
 - docker env passthrough beyond connector tokens
+
+## Signature (Verify-Only)
+
+If a bundle contains `spell.sig.json`, you can require signature verification at execution time:
+
+```bash
+spell cast <id> --require-signature ...
+```
+
+Trust store:
+
+- `spell trust add <publisher> <public-key>`
+- `spell trust list`
+- `spell trust remove <publisher>`
+
+Notes:
+
+- publisher is derived from the spell id prefix before the first `/` (example: `samples/call-webhook` -> `samples`).
+- public key format is ed25519 `spki` DER encoded as base64url.
 
 ## Example Flow
 

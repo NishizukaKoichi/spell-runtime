@@ -93,6 +93,13 @@ export interface ExecutionLog {
   id: string;
   version: string;
   input: Record<string, unknown>;
+  signature?: {
+    required: boolean;
+    status: "skipped" | "verified" | "unsigned" | "untrusted" | "invalid";
+    publisher?: string;
+    key_id?: string;
+    digest?: string;
+  };
   summary: {
     risk: SpellRisk;
     billing: SpellBilling;
@@ -113,6 +120,7 @@ export interface CastOptions {
   dryRun: boolean;
   yes: boolean;
   allowBilling: boolean;
+  requireSignature: boolean;
   verbose: boolean;
   profile?: string;
 }

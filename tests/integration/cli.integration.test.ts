@@ -2,9 +2,11 @@ import { chmod, copyFile, mkdtemp, mkdir, readdir, readFile, rm, writeFile } fro
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { generateKeyPairSync, sign } from "node:crypto";
 import nock from "nock";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { runCli } from "../../src/cli/index";
+import { computeBundleDigest } from "../../src/signature/bundleDigest";
 
 describe("spell cli integration", () => {
   let originalHome: string | undefined;
@@ -199,6 +201,121 @@ describe("spell cli integration", () => {
     const payload = JSON.parse(raw) as { input: { name: string; token: string } };
     expect(payload.input.name).toBe("[REDACTED]");
     expect(payload.input.token).toBe("[REDACTED]");
+  });
+
+  test("signature guard blocks without trust and allows with trust", async () => {
+    const bundleDir = await mkdtemp(path.join(tmpdir(), "spell-signed-"));
+    const stepsDir = path.join(bundleDir, "steps");
+    await mkdir(stepsDir, { recursive: true });
+
+    const stepPath = path.join(stepsDir, "hello.js");
+    await writeFile(stepPath, "#!/usr/bin/env node\nprocess.stdout.write('signed-hello\\n');\n", "utf8");
+    await chmod(stepPath, 0o755);
+
+    await writeFile(
+      path.join(bundleDir, "schema.json"),
+      JSON.stringify(
+        {
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          type: "object",
+          properties: { name: { type: "string" } },
+          required: ["name"],
+          additionalProperties: true
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+
+    await writeFile(
+      path.join(bundleDir, "spell.yaml"),
+      [
+        "id: signed/hello",
+        "version: 1.0.0",
+        "name: Signed Hello",
+        "summary: signed bundle",
+        "inputs_schema: ./schema.json",
+        "risk: low",
+        "permissions: []",
+        "effects:",
+        "  - type: notify",
+        "    target: stdout",
+        "    mutates: false",
+        "billing:",
+        "  enabled: false",
+        "  mode: none",
+        "  currency: USD",
+        "  max_amount: 0",
+        "runtime:",
+        "  execution: host",
+        "  platforms:",
+        "    - darwin/arm64",
+        "steps:",
+        "  - uses: shell",
+        "    name: hello",
+        "    run: steps/hello.js",
+        "checks:",
+        "  - type: exit_code",
+        "    params: {}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyDer = publicKey.export({ format: "der", type: "spki" }) as Buffer;
+
+    const digest = await computeBundleDigest(bundleDir);
+    const signature = sign(null, digest.value, privateKey);
+
+    await writeFile(
+      path.join(bundleDir, "spell.sig.json"),
+      JSON.stringify(
+        {
+          version: "v1",
+          publisher: "signed",
+          key_id: "default",
+          algorithm: "ed25519",
+          digest: { algorithm: "sha256", value: digest.valueHex },
+          signature: signature.toString("base64url")
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+
+    try {
+      expect(await runCli(["node", "spell", "install", bundleDir])).toBe(0);
+
+      const blocked = await runCliCapture([
+        "node",
+        "spell",
+        "cast",
+        "signed/hello",
+        "--require-signature",
+        "-p",
+        "name=world"
+      ]);
+      expect(blocked.code).toBe(1);
+      expect(blocked.stderr).toContain("signature required:");
+
+      expect(await runCli(["node", "spell", "trust", "add", "signed", publicKeyDer.toString("base64url")])).toBe(0);
+
+      const ok = await runCliCapture([
+        "node",
+        "spell",
+        "cast",
+        "signed/hello",
+        "--require-signature",
+        "-p",
+        "name=world"
+      ]);
+      expect(ok.code).toBe(0);
+    } finally {
+      await rm(bundleDir, { recursive: true, force: true });
+    }
   });
 
   const dockerTest = process.env.SPELL_DOCKER_TESTS === "1" ? test : test.skip;

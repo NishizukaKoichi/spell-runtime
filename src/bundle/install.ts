@@ -52,6 +52,7 @@ export async function installBundle(localPath: string): Promise<InstallResult> {
   const srcManifestPath = path.join(sourceRoot, "spell.yaml");
   const srcSchemaPath = schemaPath;
   const srcStepsPath = path.join(sourceRoot, "steps");
+  const srcSigPath = path.join(sourceRoot, "spell.sig.json");
 
   await assertPathWithinSource(sourceRoot, srcManifestPath);
   await assertPathWithinSource(sourceRoot, srcSchemaPath);
@@ -59,6 +60,16 @@ export async function installBundle(localPath: string): Promise<InstallResult> {
 
   await copyFile(srcManifestPath, path.join(targetVersionPath, "spell.yaml"));
   await copyFile(srcSchemaPath, path.join(targetVersionPath, "schema.json"));
+
+  if (await exists(srcSigPath)) {
+    const info = await lstat(srcSigPath);
+    if (info.isSymbolicLink()) {
+      throw new SpellError(`symlink is not allowed: ${srcSigPath}`);
+    }
+
+    await assertPathWithinSource(sourceRoot, srcSigPath);
+    await copyFile(srcSigPath, path.join(targetVersionPath, "spell.sig.json"));
+  }
 
   const targetStepsPath = path.join(targetVersionPath, "steps");
   await copyDirectorySafe(srcStepsPath, targetStepsPath, sourceRoot);

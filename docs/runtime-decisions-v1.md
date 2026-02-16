@@ -44,7 +44,7 @@ This document records stable architecture decisions for Spell Runtime v1.
 ## 9. Scope discipline
 v1 intentionally excludes:
 - registry/marketplace
-- signature enforcement
+- signature signing UX (keygen/sign commands)
 - real billing execution
 - DAG/parallel/rollback
 - advanced template language
@@ -60,3 +60,9 @@ v1 intentionally excludes:
   - age (`SPELL_API_LOG_RETENTION_DAYS`, default 14)
   - max files (`SPELL_API_LOG_MAX_FILES`, default 500)
 - retention pruning updates both log files and in-memory/indexed execution list for consistency.
+
+## 11. Signature verification (verify-only)
+- bundles may include `spell.sig.json` (ed25519 signature over bundle digest).
+- trust store is publisher-scoped under `~/.spell/trust/publishers/`.
+- execution can require verified signature via `spell cast --require-signature`.
+- unsigned bundles are allowed by default (no enforcement without the flag).

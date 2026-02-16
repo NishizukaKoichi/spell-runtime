@@ -9,6 +9,8 @@ import { buildInput, validateInputAgainstSchema } from "./input";
 import { runHost } from "./hostRunner";
 import { runDocker } from "./dockerRunner";
 import { renderExecutionSummary } from "./summary";
+import { enforceSignatureOrThrow, verifyBundleSignature } from "../signature/verify";
+import { publisherFromId } from "../signature/trustStore";
 
 export interface CastResult {
   executionId: string;
@@ -62,11 +64,37 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
       runtime: manifest.runtime
     };
 
+    log.signature = {
+      required: options.requireSignature,
+      status: "skipped"
+    };
+
     const input = await buildInput(options.inputFile, options.paramPairs);
     log.input = input;
 
     const schema = await readSchemaFromManifest(manifest, bundlePath);
     validateInputAgainstSchema(schema, input);
+
+    const sigResult = await verifyBundleSignature(manifest, bundlePath).catch((error) => ({
+      ok: false,
+      status: "invalid" as const,
+      publisher: publisherFromId(manifest.id),
+      key_id: undefined,
+      digest: undefined,
+      message: (error as Error).message
+    }));
+
+    log.signature = {
+      required: options.requireSignature,
+      status: sigResult.status,
+      publisher: sigResult.publisher,
+      key_id: sigResult.key_id,
+      digest: sigResult.digest
+    };
+
+    if (options.requireSignature) {
+      enforceSignatureOrThrow(sigResult);
+    }
 
     const hostPlatform = detectHostPlatform();
     const dockerPlatform = detectDockerPlatformForHost();
