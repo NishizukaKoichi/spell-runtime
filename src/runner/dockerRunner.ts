@@ -4,6 +4,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { SpellBundleManifest, CheckResult, StepResult } from "../types";
 import { SpellError } from "../util/errors";
+import { formatExecutionTimeoutMessage } from "./runtimeLimits";
 
 export interface DockerRunnerResult {
   success: boolean;
@@ -16,7 +17,8 @@ export interface DockerRunnerResult {
 export async function runDocker(
   manifest: SpellBundleManifest,
   bundlePath: string,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  executionTimeoutMs?: number
 ): Promise<DockerRunnerResult> {
   const dockerImage = manifest.runtime.docker_image;
   if (!dockerImage) {
@@ -29,7 +31,11 @@ export async function runDocker(
 
   try {
     const args = buildDockerArgs(dockerImage, bundlePath, tempDir, manifest);
-    const { code, stdout, stderr } = await runProcess("docker", args, process.cwd());
+    const { code, stdout, stderr, timedOut } = await runProcess("docker", args, process.cwd(), executionTimeoutMs);
+
+    if (timedOut && executionTimeoutMs !== undefined) {
+      throw new SpellError(formatExecutionTimeoutMessage(executionTimeoutMs));
+    }
 
     if (code !== 0) {
       throw new SpellError(stderr.trim() || `docker exited with code ${code}`);
@@ -81,13 +87,18 @@ function buildDockerArgs(dockerImage: string, bundlePath: string, tempDir: strin
 function collectEnvVarsToPass(manifest: SpellBundleManifest): Array<[string, string]> {
   const out: Array<[string, string]> = [];
 
-  // pass connector tokens only (and fail earlier if missing)
+  // pass connector tokens (and fail earlier if missing)
   for (const permission of manifest.permissions) {
     const tokenKey = `CONNECTOR_${permission.connector.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_TOKEN`;
     const value = process.env[tokenKey];
     if (typeof value === "string" && value.trim() !== "") {
       out.push([tokenKey, value]);
     }
+  }
+
+  const stepTimeout = process.env.SPELL_RUNTIME_STEP_TIMEOUT_MS;
+  if (typeof stepTimeout === "string" && stepTimeout.trim() !== "") {
+    out.push(["SPELL_RUNTIME_STEP_TIMEOUT_MS", stepTimeout.trim()]);
   }
 
   return out;
@@ -123,8 +134,9 @@ function parseRunnerJson(stdout: string): DockerRunnerResult {
 async function runProcess(
   command: string,
   args: string[],
-  cwd: string
-): Promise<{ code: number; stdout: string; stderr: string }> {
+  cwd: string,
+  timeoutMs?: number
+): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
   const child = spawn(command, args, {
     shell: false,
     cwd,
@@ -142,11 +154,26 @@ async function runProcess(
     stderr += chunk.toString();
   });
 
-  const code = await new Promise<number>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("close", (exitCode) => resolve(exitCode ?? 1));
-  });
+  let timedOut = false;
+  let timer: NodeJS.Timeout | undefined;
+  if (timeoutMs !== undefined) {
+    timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+  }
 
-  return { code, stdout, stderr };
+  let code: number;
+  try {
+    code = await new Promise<number>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (exitCode) => resolve(exitCode ?? 1));
+    });
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+
+  return { code, stdout, stderr, timedOut };
 }
-

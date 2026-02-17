@@ -88,6 +88,12 @@ Cast performs these checks before execution:
 
 If --dry-run is set, command exits after summary and validation.
 
+4.1 Runtime safety limits (v2 isolation)
+cast enforces these runtime limits (for direct CLI casts and API-triggered casts, because the API invokes spell cast):
+- SPELL_RUNTIME_INPUT_MAX_BYTES (default 65536): max bytes for merged cast input (--input + -p overrides)
+- SPELL_RUNTIME_STEP_TIMEOUT_MS (default 60000): max runtime per shell step; timed out step process is killed and cast fails with step name + timeout ms
+- SPELL_RUNTIME_EXECUTION_TIMEOUT_MS (default disabled): max total cast runtime when set to an integer > 0 (enforced in host and docker paths)
+
 5. Runtime model
 v1 supports:
 - host: steps run in order, shell/http supported.

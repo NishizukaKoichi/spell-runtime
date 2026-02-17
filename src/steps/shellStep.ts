@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { SpellStep, StepResult } from "../types";
 import { SpellError } from "../util/errors";
+import { formatExecutionTimeoutMessage, readRuntimeStepTimeoutMs } from "../runner/runtimeLimits";
 
 export interface ShellStepExecution {
   stepResult: StepResult;
@@ -8,13 +9,28 @@ export interface ShellStepExecution {
   stderr: string;
 }
 
+export interface ShellStepRunOptions {
+  maxDurationMs?: number;
+  executionTimeoutMs?: number;
+}
+
 export async function runShellStep(
   step: SpellStep,
   runPath: string,
   cwd: string,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  options: ShellStepRunOptions = {}
 ): Promise<ShellStepExecution> {
   const started = new Date().toISOString();
+  const configuredStepTimeoutMs = readRuntimeStepTimeoutMs(env);
+  const cappedByExecution =
+    options.maxDurationMs !== undefined &&
+    Number.isFinite(options.maxDurationMs) &&
+    options.maxDurationMs > 0 &&
+    options.maxDurationMs < configuredStepTimeoutMs;
+  const timeoutMs = cappedByExecution
+    ? Math.max(1, Math.ceil(options.maxDurationMs as number))
+    : configuredStepTimeoutMs;
 
   const child = spawn(runPath, [], {
     shell: false,
@@ -33,12 +49,30 @@ export async function runShellStep(
     stderr += chunk.toString();
   });
 
-  const exitCode = await new Promise<number | null>((resolve, reject) => {
-    child.on("error", reject);
-    child.on("close", resolve);
-  }).catch((error) => {
-    throw new SpellError(`failed to execute shell step '${step.name}': ${(error as Error).message}`);
-  });
+  let timeoutHit = false;
+  const timer = setTimeout(() => {
+    timeoutHit = true;
+    child.kill("SIGKILL");
+  }, timeoutMs);
+
+  let exitCode: number | null;
+  try {
+    exitCode = await new Promise<number | null>((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", resolve);
+    }).catch((error) => {
+      throw new SpellError(`failed to execute shell step '${step.name}': ${(error as Error).message}`);
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (timeoutHit) {
+    if (cappedByExecution && options.executionTimeoutMs !== undefined) {
+      throw new SpellError(formatExecutionTimeoutMessage(options.executionTimeoutMs, step.name));
+    }
+    throw new SpellError(`shell step '${step.name}' timed out after ${timeoutMs}ms`);
+  }
 
   const finished = new Date().toISOString();
 

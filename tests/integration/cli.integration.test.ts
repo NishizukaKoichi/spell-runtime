@@ -20,6 +20,9 @@ describe("spell cli integration", () => {
     delete process.env.CONNECTOR_GITHUB_TOKEN;
     delete process.env.TEST_HEADER;
     delete process.env.APP_SECRET;
+    delete process.env.SPELL_RUNTIME_INPUT_MAX_BYTES;
+    delete process.env.SPELL_RUNTIME_STEP_TIMEOUT_MS;
+    delete process.env.SPELL_RUNTIME_EXECUTION_TIMEOUT_MS;
   });
 
   afterEach(async () => {
@@ -30,6 +33,9 @@ describe("spell cli integration", () => {
       process.env.HOME = originalHome;
     }
     delete process.env.APP_SECRET;
+    delete process.env.SPELL_RUNTIME_INPUT_MAX_BYTES;
+    delete process.env.SPELL_RUNTIME_STEP_TIMEOUT_MS;
+    delete process.env.SPELL_RUNTIME_EXECUTION_TIMEOUT_MS;
     await rm(tempHome, { recursive: true, force: true });
   });
 
@@ -309,6 +315,63 @@ describe("spell cli integration", () => {
     const payload = JSON.parse(raw) as { input: { name: string; token: string } };
     expect(payload.input.name).toBe("[REDACTED]");
     expect(payload.input.token).toBe("[REDACTED]");
+  });
+
+  test("cast rejects merged input above SPELL_RUNTIME_INPUT_MAX_BYTES", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
+
+    process.env.SPELL_RUNTIME_INPUT_MAX_BYTES = "8";
+    const result = await runCliCapture(["node", "spell", "cast", "fixtures/hello-host", "-p", "name=world"]);
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("merged input is");
+    expect(result.stderr).toContain("SPELL_RUNTIME_INPUT_MAX_BYTES=8");
+  });
+
+  test("cast fails when a shell step exceeds SPELL_RUNTIME_STEP_TIMEOUT_MS", async () => {
+    const bundleDir = await createHostShellBundle("tests/step-timeout", [
+      {
+        name: "slow",
+        fileName: "slow.js",
+        source: "#!/usr/bin/env node\nsetTimeout(() => { process.stdout.write('done\\n'); }, 200);\n"
+      }
+    ]);
+
+    try {
+      expect(await runCli(["node", "spell", "install", bundleDir])).toBe(0);
+
+      process.env.SPELL_RUNTIME_STEP_TIMEOUT_MS = "50";
+      const result = await runCliCapture(["node", "spell", "cast", "tests/step-timeout", "-p", "name=world"]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("shell step 'slow' timed out after 50ms");
+    } finally {
+      await rm(bundleDir, { recursive: true, force: true });
+    }
+  });
+
+  test("cast fails when SPELL_RUNTIME_EXECUTION_TIMEOUT_MS is exceeded", async () => {
+    const bundleDir = await createHostShellBundle("tests/execution-timeout", [
+      {
+        name: "slow",
+        fileName: "slow.js",
+        source: "#!/usr/bin/env node\nsetTimeout(() => { process.stdout.write('done\\n'); }, 300);\n"
+      }
+    ]);
+
+    try {
+      expect(await runCli(["node", "spell", "install", bundleDir])).toBe(0);
+
+      process.env.SPELL_RUNTIME_STEP_TIMEOUT_MS = "1000";
+      process.env.SPELL_RUNTIME_EXECUTION_TIMEOUT_MS = "80";
+      const result = await runCliCapture(["node", "spell", "cast", "tests/execution-timeout", "-p", "name=world"]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("cast execution timed out after 80ms while running step 'slow'");
+    } finally {
+      await rm(bundleDir, { recursive: true, force: true });
+    }
   });
 
   test("signature guard blocks without trust and allows with trust", async () => {
@@ -746,4 +809,73 @@ async function runCommand(
   }
 
   return { code, stdout, stderr };
+}
+
+async function createHostShellBundle(
+  spellId: string,
+  steps: Array<{ name: string; fileName: string; source: string }>
+): Promise<string> {
+  const bundleDir = await mkdtemp(path.join(tmpdir(), "spell-timeout-bundle-"));
+  const stepsDir = path.join(bundleDir, "steps");
+  await mkdir(stepsDir, { recursive: true });
+
+  for (const step of steps) {
+    const stepPath = path.join(stepsDir, step.fileName);
+    await writeFile(stepPath, step.source, "utf8");
+    await chmod(stepPath, 0o755);
+  }
+
+  await writeFile(
+    path.join(bundleDir, "schema.json"),
+    JSON.stringify(
+      {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+        additionalProperties: true
+      },
+      null,
+      2
+    ) + "\n",
+    "utf8"
+  );
+
+  const manifestLines: string[] = [
+    `id: ${spellId}`,
+    "version: 1.0.0",
+    "name: Timeout Fixture",
+    "summary: runtime timeout fixture",
+    "inputs_schema: ./schema.json",
+    "risk: low",
+    "permissions: []",
+    "effects:",
+    "  - type: notify",
+    "    target: stdout",
+    "    mutates: false",
+    "billing:",
+    "  enabled: false",
+    "  mode: none",
+    "  currency: USD",
+    "  max_amount: 0",
+    "runtime:",
+    "  execution: host",
+    "  platforms:",
+    `    - ${process.platform}/${process.arch}`,
+    "steps:"
+  ];
+
+  for (const step of steps) {
+    manifestLines.push("  - uses: shell");
+    manifestLines.push(`    name: ${step.name}`);
+    manifestLines.push(`    run: steps/${step.fileName}`);
+  }
+
+  manifestLines.push("checks:");
+  manifestLines.push("  - type: exit_code");
+  manifestLines.push("    params: {}");
+  manifestLines.push("");
+
+  await writeFile(path.join(bundleDir, "spell.yaml"), manifestLines.join("\n"), "utf8");
+  return bundleDir;
 }

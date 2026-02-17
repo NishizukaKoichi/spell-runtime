@@ -496,9 +496,10 @@ async function runJob(
   }
 
   const mapped = mapRuntimeError(stderr || stdout);
+  const status: JobStatus = mapped.code === "EXECUTION_TIMEOUT" ? "timeout" : "failed";
   jobs.set(job.execution_id, {
     ...finishedBase,
-    status: "failed",
+    status,
     error_code: mapped.code,
     message: mapped.message
   });
@@ -560,6 +561,18 @@ async function loadSanitizedReceipt(runtimeLogPath: string): Promise<Record<stri
 }
 
 function mapRuntimeError(raw: string): { code: string; message: string } {
+  const executionTimeout = /cast execution timed out after \d+ms(?: while running step '[^']+')?/.exec(raw);
+  if (executionTimeout) {
+    return { code: "EXECUTION_TIMEOUT", message: executionTimeout[0] };
+  }
+  const stepTimeout = /shell step '[^']+' timed out after \d+ms/.exec(raw);
+  if (stepTimeout) {
+    return { code: "STEP_TIMEOUT", message: stepTimeout[0] };
+  }
+  const inputTooLarge = /merged input is \d+ bytes, exceeds SPELL_RUNTIME_INPUT_MAX_BYTES=\d+/.exec(raw);
+  if (inputTooLarge) {
+    return { code: "INPUT_TOO_LARGE", message: inputTooLarge[0] };
+  }
   if (/signature required:/.test(raw)) {
     return { code: "SIGNATURE_REQUIRED", message: "signature required" };
   }

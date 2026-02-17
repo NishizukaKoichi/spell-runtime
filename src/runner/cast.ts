@@ -12,6 +12,7 @@ import { renderExecutionSummary } from "./summary";
 import { enforceSignatureOrThrow, verifyBundleSignature } from "../signature/verify";
 import { publisherFromId } from "../signature/trustStore";
 import { findFirstUsableLicense } from "../license/store";
+import { readRuntimeExecutionTimeoutMs, readRuntimeInputMaxBytes } from "./runtimeLimits";
 
 export interface CastResult {
   executionId: string;
@@ -55,6 +56,9 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
   };
 
   try {
+    const runtimeInputMaxBytes = readRuntimeInputMaxBytes();
+    const runtimeExecutionTimeoutMs = readRuntimeExecutionTimeoutMs();
+
     const loaded = await resolveInstalledBundle(options.id, options.version);
     const { manifest, bundlePath } = loaded;
 
@@ -77,6 +81,12 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
     };
 
     const input = await buildInput(options.inputFile, options.paramPairs);
+    const inputSizeBytes = Buffer.byteLength(JSON.stringify(input), "utf8");
+    if (inputSizeBytes > runtimeInputMaxBytes) {
+      throw new SpellError(
+        `merged input is ${inputSizeBytes} bytes, exceeds SPELL_RUNTIME_INPUT_MAX_BYTES=${runtimeInputMaxBytes}`
+      );
+    }
     log.input = input;
 
     const schema = await readSchemaFromManifest(manifest, bundlePath);
@@ -155,7 +165,7 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
     if (manifest.runtime.execution === "docker") {
       logger.debug({ id: manifest.id, version: manifest.version }, "starting docker execution");
 
-      const dockerResult = await runDocker(manifest, bundlePath, input);
+      const dockerResult = await runDocker(manifest, bundlePath, input, runtimeExecutionTimeoutMs);
       log.steps = dockerResult.stepResults;
       log.outputs = dockerResult.outputs;
       log.checks = dockerResult.checks;
@@ -173,7 +183,7 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
 
     logger.debug({ id: manifest.id, version: manifest.version }, "starting host execution");
 
-    const runResult = await runHost(manifest, bundlePath, input);
+    const runResult = await runHost(manifest, bundlePath, input, runtimeExecutionTimeoutMs);
     log.steps = runResult.stepResults;
     log.outputs = runResult.outputs;
 

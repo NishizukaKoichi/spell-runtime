@@ -21,7 +21,8 @@ export async function runHttpStep(
   step: SpellStep,
   runPath: string,
   input: Record<string, unknown>,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  signal?: AbortSignal
 ): Promise<HttpStepExecution> {
   const started = new Date().toISOString();
 
@@ -65,11 +66,24 @@ export async function runHttpStep(
     }
   }
 
-  const response = await fetchHttp(resolvedUrl, {
-    method: resolvedMethod,
-    headers,
-    body
-  });
+  let response: Awaited<ReturnType<typeof fetchHttp>>;
+  try {
+    response = await fetchHttp(resolvedUrl, {
+      method: resolvedMethod,
+      headers,
+      body,
+      signal
+    });
+  } catch (error) {
+    if (signal?.aborted) {
+      const reason = signal.reason;
+      if (reason instanceof Error) {
+        throw reason;
+      }
+      throw new SpellError(`http step '${step.name}' aborted`);
+    }
+    throw new SpellError(`http step '${step.name}' request failed: ${(error as Error).message}`);
+  }
 
   const responseText = await response.text();
   let responseBody: unknown;
