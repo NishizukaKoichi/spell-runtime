@@ -21,6 +21,8 @@
     "api:dev": "tsx src/api/index.ts",
     "api:start": "node dist/api/index.js",
     "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "npm run typecheck",
     "prepare": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
