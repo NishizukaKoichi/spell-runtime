@@ -41,6 +41,21 @@ Manual npx (local package):
 - spell trust remove <publisher>
 - spell log <execution-id>
 
+2.1 Install sources
+- spell install <local-path> keeps the same CLI interface and now accepts:
+  - local bundle paths (existing behavior)
+  - git URLs:
+    - https://...
+    - ssh://...
+    - git@...
+
+When a git URL is provided, runtime performs a shallow clone (git clone --depth 1) into a temporary directory and installs from the cloned repository root.
+
+Limitations:
+- git must be installed and available on PATH.
+- clone/auth/network behavior is delegated to your local git configuration.
+- spell.yaml must exist at the cloned repository root (subdirectory installs are not supported).
+
 3. Storage layout
 - Spells: ~/.spell/spells/<id_key>/<version>/
 - ID index: ~/.spell/spells/<id_key>/spell.id.txt

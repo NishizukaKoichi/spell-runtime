@@ -54,6 +54,24 @@ npm run smoke:npx
 - `spell trust remove <publisher>`
 - `spell log <execution-id>`
 
+## Install Sources
+
+`spell install <local-path>` keeps the same CLI interface and now accepts:
+
+- local bundle paths (existing behavior)
+- git URLs:
+  - `https://...`
+  - `ssh://...`
+  - `git@...`
+
+When a git URL is provided, runtime performs a shallow clone (`git clone --depth 1`) into a temporary directory and installs from the cloned repository root.
+
+Limitations:
+
+- `git` must be installed and available on `PATH`.
+- clone/auth/network behavior is delegated to your local `git` configuration.
+- `spell.yaml` must exist at the cloned repository root (subdirectory installs are not supported).
+
 ## Storage Layout
 
 - Spells: `~/.spell/spells/<id_key>/<version>/`

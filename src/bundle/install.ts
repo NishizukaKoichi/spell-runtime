@@ -1,5 +1,19 @@
-import { access, copyFile, lstat, mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import {
+  access,
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  writeFile
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { toIdKey } from "../util/idKey";
 import { ensureSpellDirs, spellsRoot } from "../util/paths";
 import { SpellError } from "../util/errors";
@@ -13,14 +27,15 @@ export interface InstallResult {
 }
 
 export async function installBundle(localPath: string): Promise<InstallResult> {
-  const sourcePath = path.resolve(localPath);
-  const sourceRoot = await realpath(sourcePath);
-
-  const sourceStat = await stat(sourceRoot);
-  if (!sourceStat.isDirectory()) {
-    throw new SpellError(`bundle path must be a directory: ${localPath}`);
+  const source = await resolveInstallSource(localPath);
+  try {
+    return await installBundleFromSource(source.sourceRoot);
+  } finally {
+    await source.cleanup();
   }
+}
 
+async function installBundleFromSource(sourceRoot: string): Promise<InstallResult> {
   const { manifest, schemaPath } = await loadManifestFromDir(sourceRoot);
   const idKey = toIdKey(manifest.id);
 
@@ -84,6 +99,96 @@ export async function installBundle(localPath: string): Promise<InstallResult> {
     idKey,
     destination: targetVersionPath
   };
+}
+
+interface InstallSource {
+  sourceRoot: string;
+  cleanup: () => Promise<void>;
+}
+
+async function resolveInstallSource(input: string): Promise<InstallSource> {
+  if (isGitSource(input)) {
+    return cloneGitSource(input);
+  }
+
+  const sourcePath = path.resolve(input);
+  const sourceRoot = await realpath(sourcePath);
+
+  const sourceStat = await stat(sourceRoot);
+  if (!sourceStat.isDirectory()) {
+    throw new SpellError(`bundle path must be a directory: ${input}`);
+  }
+
+  return {
+    sourceRoot,
+    cleanup: async () => {}
+  };
+}
+
+function isGitSource(value: string): boolean {
+  return /^https:\/\//i.test(value) || /^ssh:\/\//i.test(value) || /^git@[^:]+:.+/.test(value);
+}
+
+async function cloneGitSource(source: string): Promise<InstallSource> {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "spell-install-"));
+  const cloneRoot = path.join(tempRoot, "bundle");
+
+  try {
+    await runGitClone(source, cloneRoot);
+  } catch (error) {
+    await rm(tempRoot, { recursive: true, force: true });
+    throw error;
+  }
+
+  const sourceRoot = await realpath(cloneRoot);
+
+  return {
+    sourceRoot,
+    cleanup: async () => {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  };
+}
+
+async function runGitClone(source: string, targetDir: string): Promise<void> {
+  const child = spawn("git", ["clone", "--depth", "1", source, targetDir], {
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  let stdout = "";
+  let stderr = "";
+
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    child.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") {
+        reject(new SpellError("git executable not found: install git and ensure it is on PATH"));
+        return;
+      }
+
+      reject(new SpellError(`failed to run git clone for '${source}': ${error.message}`));
+    });
+
+    child.once("close", (exitCode) => {
+      if ((exitCode ?? 1) !== 0) {
+        const detail = (stderr.trim() || stdout.trim() || `git clone exited with code ${exitCode ?? 1}`).replace(
+          /\s+/g,
+          " "
+        );
+        reject(new SpellError(`failed to clone git source '${source}': ${detail}`));
+        return;
+      }
+
+      resolve();
+    });
+  });
 }
 
 async function copyDirectorySafe(sourceDir: string, targetDir: string, sourceRoot: string): Promise<void> {

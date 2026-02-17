@@ -21,8 +21,8 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
 
   program
     .command("install")
-    .description("Install a local spell bundle")
-    .argument("<local-path>", "Path to local spell bundle")
+    .description("Install a spell bundle from local path or git URL")
+    .argument("<local-path>", "Path to local spell bundle or git URL")
     .action(async (localPath: string) => {
       const result = await installBundle(localPath);
       process.stdout.write(`${result.id}@${result.version}\n`);

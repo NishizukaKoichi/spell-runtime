@@ -1,8 +1,9 @@
-import { chmod, copyFile, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { generateKeyPairSync, sign } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import nock from "nock";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { runCli } from "../../src/cli/index";
@@ -44,6 +45,71 @@ describe("spell cli integration", () => {
     const logsDir = path.join(tempHome, ".spell", "logs");
     const logs = await readdir(logsDir);
     expect(logs.length).toBeGreaterThan(0);
+  });
+
+  test("install supports git https sources", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    const gitRepo = await createBareGitRepoFromSource(fixture);
+    const gitUrl = "https://spell.test/hello-host.git";
+
+    try {
+      await withGitUrlRewrite(gitUrl, gitRepo.remotePath, async () => {
+        expect(await runCli(["node", "spell", "install", gitUrl])).toBe(0);
+      });
+
+      expect(await runCli(["node", "spell", "inspect", "fixtures/hello-host"])).toBe(0);
+    } finally {
+      await rm(gitRepo.tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("install from git source reports clone failure", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "spell-git-missing-"));
+    const gitUrl = "https://spell.test/missing.git";
+    const missingRemote = path.join(tempDir, "missing.git");
+
+    try {
+      await withGitUrlRewrite(gitUrl, missingRemote, async () => {
+        const result = await runCliCapture(["node", "spell", "install", gitUrl]);
+        expect(result.code).toBe(1);
+        expect(result.stderr).toContain("failed to clone git source");
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("install from git source fails when cloned root has no spell.yaml", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    const gitRepo = await createBareGitRepoFromSource(fixture, { removeSpellYaml: true });
+    const gitUrl = "https://spell.test/no-manifest.git";
+
+    try {
+      await withGitUrlRewrite(gitUrl, gitRepo.remotePath, async () => {
+        const result = await runCliCapture(["node", "spell", "install", gitUrl]);
+        expect(result.code).toBe(1);
+        expect(result.stderr).toContain("spell.yaml not found");
+      });
+    } finally {
+      await rm(gitRepo.tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("install from git source reports missing git executable", async () => {
+    const previousPath = process.env.PATH;
+    process.env.PATH = "";
+
+    try {
+      const result = await runCliCapture(["node", "spell", "install", "https://spell.test/repo.git"]);
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("git executable not found");
+    } finally {
+      if (previousPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = previousPath;
+      }
+    }
   });
 
   test("billing guard blocks without --allow-billing", async () => {
@@ -534,6 +600,55 @@ describe("spell cli integration", () => {
     }
   });
 });
+
+async function createBareGitRepoFromSource(
+  sourceDir: string,
+  options: { removeSpellYaml?: boolean } = {}
+): Promise<{ tempDir: string; remotePath: string }> {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "spell-git-source-"));
+  const workPath = path.join(tempDir, "work");
+  const remotePath = path.join(tempDir, "bundle.git");
+
+  await cp(sourceDir, workPath, { recursive: true });
+  if (options.removeSpellYaml) {
+    await rm(path.join(workPath, "spell.yaml"), { force: true });
+  }
+
+  await runCommand("git", ["init", "--initial-branch=main"], workPath);
+  await runCommand("git", ["add", "."], workPath);
+  await runCommand(
+    "git",
+    ["-c", "user.name=spell-tests", "-c", "user.email=spell-tests@example.test", "commit", "-m", "init"],
+    workPath
+  );
+  await runCommand("git", ["init", "--bare", remotePath], tempDir);
+  await runCommand("git", ["remote", "add", "origin", remotePath], workPath);
+  await runCommand("git", ["push", "origin", "main"], workPath);
+
+  return { tempDir, remotePath };
+}
+
+async function withGitUrlRewrite<T>(gitUrl: string, targetRepoPath: string, run: () => Promise<T>): Promise<T> {
+  const previousGlobalConfig = process.env.GIT_CONFIG_GLOBAL;
+  const configDir = await mkdtemp(path.join(tmpdir(), "spell-gitconfig-"));
+  const configPath = path.join(configDir, "gitconfig");
+  const fileUrl = pathToFileURL(targetRepoPath).toString();
+
+  await writeFile(configPath, `[url "${fileUrl}"]\n\tinsteadOf = ${gitUrl}\n`, "utf8");
+  process.env.GIT_CONFIG_GLOBAL = configPath;
+
+  try {
+    return await run();
+  } finally {
+    if (previousGlobalConfig === undefined) {
+      delete process.env.GIT_CONFIG_GLOBAL;
+    } else {
+      process.env.GIT_CONFIG_GLOBAL = previousGlobalConfig;
+    }
+
+    await rm(configDir, { recursive: true, force: true });
+  }
+}
 
 async function runCliCapture(argv: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   let stdout = "";
