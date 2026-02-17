@@ -47,6 +47,8 @@ npm run smoke:npx
 - `spell list`
 - `spell inspect <id> [--version x.y.z]`
 - `spell cast <id> [--version x.y.z] [-p key=value ...] [--input input.json] [--dry-run] [--yes] [--allow-billing] [--require-signature] [--verbose] [--profile <name>]`
+- `spell sign keygen <publisher> [--key-id default] [--out-dir .spell-keys]`
+- `spell sign bundle <local-path> --private-key <file> [--key-id default] [--publisher <name>]`
 - `spell trust add <publisher> <public-key> [--key-id default]`
 - `spell trust list`
 - `spell trust remove <publisher>`
@@ -119,18 +121,25 @@ Use these `effect.type` words where possible:
 
 - name search or ambiguous resolution (id only)
 - registry/marketplace/license verification
-- signature signing UX (keygen/sign commands)
 - real billing execution (Stripe)
 - DAG/parallel/rollback/self-healing
 - advanced templating language (only `{{INPUT.*}}` and `{{ENV.*}}`)
 - docker env passthrough beyond connector tokens
 
-## Signature (Verify-Only)
+## Signature (Sign + Verify)
 
 If a bundle contains `spell.sig.json`, you can require signature verification at execution time:
 
 ```bash
 spell cast <id> --require-signature ...
+```
+
+Signing flow:
+
+```bash
+spell sign keygen samples --key-id default --out-dir .spell-keys
+spell trust add samples <public_key_base64url> --key-id default
+spell sign bundle ./examples/spells/call-webhook --private-key .spell-keys/samples__default.private.pem --key-id default
 ```
 
 Trust store:

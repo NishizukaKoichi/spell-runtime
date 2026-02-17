@@ -5,6 +5,7 @@ import path from "node:path";
 import { Command } from "commander";
 import { installBundle } from "../bundle/install";
 import { listInstalledSpells, readSchemaFromManifest, resolveInstalledBundle, summarizeSchema } from "../bundle/store";
+import { generateSigningKeypair, signBundleFromPrivateKey } from "../signature/signing";
 import { castSpell } from "../runner/cast";
 import { listTrustedPublishers, removeTrustedPublisher, upsertTrustedPublisherKey } from "../signature/trustStore";
 import { SpellError } from "../util/errors";
@@ -138,6 +139,61 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
 
         process.stdout.write(`execution_id: ${result.executionId}\n`);
         process.stdout.write(`log: ${result.logPath}\n`);
+      }
+    );
+
+  const signCmd = program.command("sign").description("Create signing keys and sign spell bundles");
+
+  signCmd
+    .command("keygen")
+    .description("Generate an ed25519 keypair for spell signing")
+    .argument("<publisher>", "Publisher (id prefix before first slash)")
+    .option("--key-id <id>", "Key id", "default")
+    .option("--out-dir <dir>", "Output directory", ".spell-keys")
+    .action(async (publisher: string, options: { keyId: string; outDir: string }) => {
+      const result = await generateSigningKeypair({
+        publisher,
+        keyId: options.keyId,
+        outDir: options.outDir
+      });
+
+      process.stdout.write(`publisher: ${result.publisher}\n`);
+      process.stdout.write(`key_id: ${result.keyId}\n`);
+      process.stdout.write(`private_key: ${result.privateKeyPath}\n`);
+      process.stdout.write(`public_key_file: ${result.publicKeyPath}\n`);
+      process.stdout.write(`public_key_base64url: ${result.publicKeyBase64Url}\n`);
+      process.stdout.write(
+        `trust_add: spell trust add ${result.publisher} ${result.publicKeyBase64Url} --key-id ${result.keyId}\n`
+      );
+    });
+
+  signCmd
+    .command("bundle")
+    .description("Create spell.sig.json for a local spell bundle")
+    .argument("<local-path>", "Path to local bundle containing spell.yaml")
+    .requiredOption("--private-key <file>", "PKCS#8 private key (PEM)")
+    .option("--key-id <id>", "Key id", "default")
+    .option("--publisher <name>", "Publisher override (defaults to id prefix)")
+    .action(
+      async (
+        localPath: string,
+        options: {
+          privateKey: string;
+          keyId: string;
+          publisher?: string;
+        }
+      ) => {
+        const result = await signBundleFromPrivateKey({
+          bundlePath: localPath,
+          privateKeyPath: options.privateKey,
+          keyId: options.keyId,
+          publisher: options.publisher
+        });
+
+        process.stdout.write(`signed: ${result.signaturePath}\n`);
+        process.stdout.write(`publisher: ${result.publisher}\n`);
+        process.stdout.write(`key_id: ${result.keyId}\n`);
+        process.stdout.write(`digest: ${result.digestHex}\n`);
       }
     );
 

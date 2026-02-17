@@ -44,7 +44,6 @@ This document records stable architecture decisions for Spell Runtime v1.
 ## 9. Scope discipline
 v1 intentionally excludes:
 - registry/marketplace
-- signature signing UX (keygen/sign commands)
 - real billing execution
 - DAG/parallel/rollback
 - advanced template language
@@ -66,3 +65,8 @@ v1 intentionally excludes:
 - trust store is publisher-scoped under `~/.spell/trust/publishers/`.
 - execution can require verified signature via `spell cast --require-signature`.
 - unsigned bundles are allowed by default (no enforcement without the flag).
+
+## 12. Signature authoring UX
+- `spell sign keygen` generates ed25519 keypairs for publishers.
+- `spell sign bundle` writes `spell.sig.json` for local bundles.
+- public keys are registered via `spell trust add`.
