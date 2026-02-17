@@ -110,6 +110,22 @@ describe("spell cli integration", () => {
         process.env.PATH = previousPath;
       }
     }
+  test("license commands add/list/remove local tokens", async () => {
+    const addResult = await runCliCapture(["node", "spell", "license", "add", "dev", "token-123"]);
+    expect(addResult.code).toBe(0);
+
+    const listResult = await runCliCapture(["node", "spell", "license", "list"]);
+    expect(listResult.code).toBe(0);
+    expect(listResult.stdout).toContain("name\thas_token\tupdated_at");
+    expect(listResult.stdout).toContain("dev\ttrue\t");
+    expect(listResult.stdout).not.toContain("token-123");
+
+    const removeResult = await runCliCapture(["node", "spell", "license", "remove", "dev"]);
+    expect(removeResult.code).toBe(0);
+
+    const listAfterRemove = await runCliCapture(["node", "spell", "license", "list"]);
+    expect(listAfterRemove.code).toBe(0);
+    expect(listAfterRemove.stdout).toContain("No licenses");
   });
 
   test("billing guard blocks without --allow-billing", async () => {
@@ -119,6 +135,32 @@ describe("spell cli integration", () => {
     const result = await runCliCapture(["node", "spell", "cast", "fixtures/billing-guard"]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("billing enabled requires --allow-billing");
+  });
+
+  test("billing guard blocks without license token after --allow-billing", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/billing-guard");
+    expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
+
+    const result = await runCliCapture(["node", "spell", "cast", "fixtures/billing-guard", "--allow-billing"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("billing enabled requires license token (spell license add ...)");
+  });
+
+  test("billing guard passes with --allow-billing when a license token exists", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/billing-guard");
+    expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
+    expect(await runCli(["node", "spell", "license", "add", "dev", "token-123"])).toBe(0);
+
+    const result = await runCliCapture(["node", "spell", "cast", "fixtures/billing-guard", "--allow-billing"]);
+    expect(result.code).toBe(0);
+
+    const logsDir = path.join(tempHome, ".spell", "logs");
+    const logs = (await readdir(logsDir)).sort();
+    const lastLog = logs[logs.length - 1];
+    const payload = JSON.parse(await readFile(path.join(logsDir, lastLog), "utf8")) as Record<string, unknown>;
+    const summary = payload.summary as Record<string, unknown>;
+
+    expect(summary.license).toEqual({ licensed: true, name: "dev" });
   });
 
   test("risk guard blocks without --yes", async () => {

@@ -34,6 +34,9 @@ Manual npx (local package):
 - spell list
 - spell inspect <id> [--version x.y.z]
 - spell cast <id> [--version x.y.z] [-p key=value ...] [--input input.json] [--dry-run] [--yes] [--allow-billing] [--require-signature] [--verbose] [--profile <name>]
+- spell license add <name> <token>
+- spell license list
+- spell license remove <name>
 - spell sign keygen <publisher> [--key-id default] [--out-dir .spell-keys]
 - spell sign bundle <local-path> --private-key <file> [--key-id default] [--publisher <name>]
 - spell trust add <publisher> <public-key> [--key-id default]
@@ -60,6 +63,7 @@ Limitations:
 - Spells: ~/.spell/spells/<id_key>/<version>/
 - ID index: ~/.spell/spells/<id_key>/spell.id.txt
 - Logs: ~/.spell/logs/<timestamp>_<id>_<version>.json
+- Billing license tokens: ~/.spell/licenses/*.json
 
 id_key is fixed as base64url(utf8(id)).
 - id is the logical identifier (display, package identity).
@@ -78,6 +82,7 @@ Cast performs these checks before execution:
 - Platform guard
 - Risk guard (high/critical requires --yes)
 - Billing guard (billing.enabled requires --allow-billing)
+- Billing license guard (billing.enabled + --allow-billing requires a local token from spell license add ...)
 - Connector token guard (CONNECTOR_<NAME>_TOKEN)
 - Execution summary output
 

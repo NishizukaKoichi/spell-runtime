@@ -11,6 +11,7 @@ import { runDocker } from "./dockerRunner";
 import { renderExecutionSummary } from "./summary";
 import { enforceSignatureOrThrow, verifyBundleSignature } from "../signature/verify";
 import { publisherFromId } from "../signature/trustStore";
+import { findFirstUsableLicense } from "../license/store";
 
 export interface CastResult {
   executionId: string;
@@ -42,6 +43,9 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
       runtime: {
         execution: "host",
         platforms: []
+      },
+      license: {
+        licensed: false
       }
     },
     steps: [],
@@ -61,7 +65,10 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
     log.summary = {
       risk: manifest.risk,
       billing: manifest.billing,
-      runtime: manifest.runtime
+      runtime: manifest.runtime,
+      license: {
+        licensed: false
+      }
     };
 
     log.signature = {
@@ -112,6 +119,17 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
 
     if (manifest.billing.enabled && !options.allowBilling) {
       throw new SpellError("billing enabled requires --allow-billing");
+    }
+
+    if (manifest.billing.enabled) {
+      const matchedLicense = await findFirstUsableLicense();
+      if (!matchedLicense) {
+        throw new SpellError("billing enabled requires license token (spell license add ...)");
+      }
+      log.summary.license = {
+        licensed: true,
+        name: matchedLicense.name
+      };
     }
 
     for (const permission of manifest.permissions) {

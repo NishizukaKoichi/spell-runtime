@@ -104,6 +104,10 @@ export interface ExecutionLog {
     risk: SpellRisk;
     billing: SpellBilling;
     runtime: SpellRuntime;
+    license: {
+      licensed: boolean;
+      name?: string;
+    };
   };
   steps: StepResult[];
   outputs: Record<string, unknown>;

@@ -7,6 +7,7 @@ import { installBundle } from "../bundle/install";
 import { listInstalledSpells, readSchemaFromManifest, resolveInstalledBundle, summarizeSchema } from "../bundle/store";
 import { generateSigningKeypair, signBundleFromPrivateKey } from "../signature/signing";
 import { castSpell } from "../runner/cast";
+import { listLicenses, removeLicense, upsertLicense } from "../license/store";
 import { listTrustedPublishers, removeTrustedPublisher, upsertTrustedPublisherKey } from "../signature/trustStore";
 import { SpellError } from "../util/errors";
 import { logsRoot } from "../util/paths";
@@ -196,6 +197,46 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
         process.stdout.write(`digest: ${result.digestHex}\n`);
       }
     );
+
+  const license = program.command("license").description("Manage local billing license tokens");
+
+  license
+    .command("add")
+    .description("Add or update a local license token")
+    .argument("<name>", "License label")
+    .argument("<token>", "License token")
+    .action(async (name: string, token: string) => {
+      await upsertLicense(name, token);
+      process.stdout.write(`added license=${name.trim()}\n`);
+    });
+
+  license
+    .command("list")
+    .description("List local licenses")
+    .action(async () => {
+      const licenses = await listLicenses();
+      if (licenses.length === 0) {
+        process.stdout.write("No licenses\n");
+        return;
+      }
+
+      process.stdout.write("name\thas_token\tupdated_at\n");
+      for (const entry of licenses) {
+        process.stdout.write(`${entry.name}\t${entry.hasToken}\t${entry.updated_at ?? "-"}\n`);
+      }
+    });
+
+  license
+    .command("remove")
+    .description("Remove a local license token")
+    .argument("<name>", "License label")
+    .action(async (name: string) => {
+      const removed = await removeLicense(name);
+      if (!removed) {
+        throw new SpellError(`license not found: ${name}`);
+      }
+      process.stdout.write(`removed license=${name.trim()}\n`);
+    });
 
   const trust = program.command("trust").description("Manage trusted publisher keys");
 

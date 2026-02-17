@@ -22,8 +22,13 @@ export function trustedPublishersRoot(): string {
   return path.join(trustRoot(), "publishers");
 }
 
+export function licensesRoot(): string {
+  return path.join(spellHome(), "licenses");
+}
+
 export async function ensureSpellDirs(): Promise<void> {
   await mkdir(spellsRoot(), { recursive: true });
   await mkdir(logsRoot(), { recursive: true });
   await mkdir(trustedPublishersRoot(), { recursive: true });
+  await mkdir(licensesRoot(), { recursive: true });
 }
