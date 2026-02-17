@@ -12,6 +12,7 @@ describe("button registry contract", () => {
     const entry = resolveButtonEntry(registry, "call_webhook_demo");
     expect(entry.spell_id).toBe("samples/call-webhook");
     expect(entry.required_confirmations).toEqual({ risk: false, billing: false });
+    expect(entry.require_signature).toBe(false);
   });
 
   test("rejects duplicate button_id", async () => {

@@ -7,7 +7,7 @@ This spec is for the integration layer around the existing CLI runtime.
 
 ## 2. Non-goals
 - Add new runtime features to `spell` CLI.
-- Introduce registry, signature enforcement, or billing execution.
+- Introduce billing execution.
 - Implement Docker execution in v1.
 
 ## 3. Done Definition (Integration)
@@ -47,6 +47,7 @@ Optional fields:
 - `label`: display text
 - `description`
 - `owners`
+- `require_signature`: boolean, when true backend adds `--require-signature`
 
 See sample:
 - `/Users/koichinishizuka/spell-runtime/examples/button-registry.v1.json`
@@ -113,6 +114,7 @@ Given registry entry and request:
    - add `--dry-run` when request asks dry run
    - add `--yes` only when policy and confirmation are satisfied
    - add `--allow-billing` only when policy and confirmation are satisfied
+   - add `--require-signature` when `require_signature=true`
 5. Execute with `shell=false`.
 6. Parse stdout lines:
    - `execution_id: ...`
@@ -141,6 +143,7 @@ Given registry entry and request:
 Map common stderr messages from runtime to stable API error codes:
 - `risk high requires --yes` -> `RISK_CONFIRMATION_REQUIRED`
 - `billing enabled requires --allow-billing` -> `BILLING_CONFIRMATION_REQUIRED`
+- `signature required: ...` -> `SIGNATURE_REQUIRED`
 - `missing connector token ...` -> `CONNECTOR_TOKEN_MISSING`
 - `platform mismatch: ...` -> `PLATFORM_UNSUPPORTED`
 - `spell not installed: ...` -> `SPELL_NOT_INSTALLED`
@@ -179,6 +182,7 @@ const args = [
 if (request.dry_run) args.push("--dry-run");
 if (entry.required_confirmations.risk && request.confirmation?.risk_acknowledged) args.push("--yes");
 if (entry.required_confirmations.billing && request.confirmation?.billing_acknowledged) args.push("--allow-billing");
+if (entry.require_signature) args.push("--require-signature");
 
 const { code, stdout, stderr } = await runSpellCli(args);
 if (code !== 0) return mapRuntimeError(stderr);
@@ -201,4 +205,4 @@ return parseExecution(stdout);
 - Add queue/async job mode for long-running spells.
 - Add workflow status stream (SSE/WebSocket).
 - Add runtime host pool routing by platform.
-- Add signed spell bundles when v2 policy is ready.
+- Add signature keygen/sign UX when v2 policy is ready.

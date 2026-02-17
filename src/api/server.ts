@@ -34,6 +34,7 @@ interface ExecutionJob {
   button_id: string;
   spell_id: string;
   version: string;
+  require_signature: boolean;
   status: JobStatus;
   actor_role: string;
   created_at: string;
@@ -256,6 +257,7 @@ export async function startExecutionApiServer(
           button_id: entry.button_id,
           spell_id: entry.spell_id,
           version: entry.version,
+          require_signature: entry.require_signature ?? false,
           status: "queued",
           actor_role: actorRole,
           created_at: now
@@ -269,6 +271,7 @@ export async function startExecutionApiServer(
           input,
           parsed.dry_run ?? false,
           entry.required_confirmations,
+          entry.require_signature ?? false,
           executionTimeoutMs,
           jobs,
           persistJobs,
@@ -303,6 +306,7 @@ export async function startExecutionApiServer(
             version: button.version,
             defaults: button.defaults,
             required_confirmations: button.required_confirmations,
+            require_signature: button.require_signature ?? false,
             allowed_roles: button.allowed_roles
           }))
         });
@@ -391,6 +395,7 @@ async function runJob(
   input: Record<string, unknown>,
   dryRun: boolean,
   confirmations: { risk: boolean; billing: boolean },
+  requireSignature: boolean,
   executionTimeoutMs: number,
   jobs: Map<string, ExecutionJob>,
   persistJobs: () => Promise<void>,
@@ -409,6 +414,7 @@ async function runJob(
   if (dryRun) args.push("--dry-run");
   if (confirmations.risk) args.push("--yes");
   if (confirmations.billing) args.push("--allow-billing");
+  if (requireSignature) args.push("--require-signature");
 
   const running: ExecutionJob = {
     ...job,
@@ -508,6 +514,7 @@ function summarizeJob(job: ExecutionJob): Record<string, unknown> {
     button_id: job.button_id,
     spell_id: job.spell_id,
     version: job.version,
+    require_signature: job.require_signature,
     status: job.status,
     actor_role: job.actor_role,
     created_at: job.created_at,
@@ -553,6 +560,9 @@ async function loadSanitizedReceipt(runtimeLogPath: string): Promise<Record<stri
 }
 
 function mapRuntimeError(raw: string): { code: string; message: string } {
+  if (/signature required:/.test(raw)) {
+    return { code: "SIGNATURE_REQUIRED", message: "signature required" };
+  }
   if (/risk .* requires --yes/.test(raw)) {
     return { code: "RISK_CONFIRMATION_REQUIRED", message: "risk confirmation required" };
   }
@@ -907,7 +917,10 @@ async function loadExecutionJobsIndex(filePath: string): Promise<Map<string, Exe
     if (!isExecutionJob(item)) {
       continue;
     }
-    jobs.set(item.execution_id, item);
+    jobs.set(item.execution_id, {
+      ...item,
+      require_signature: Boolean((item as Partial<ExecutionJob>).require_signature)
+    });
   }
 
   return jobs;
@@ -1082,6 +1095,7 @@ function isExecutionJob(value: unknown): value is ExecutionJob {
     typeof obj.button_id === "string" &&
     typeof obj.spell_id === "string" &&
     typeof obj.version === "string" &&
+    (obj.require_signature === undefined || typeof obj.require_signature === "boolean") &&
     typeof obj.actor_role === "string" &&
     typeof obj.created_at === "string" &&
     typeof obj.status === "string" &&

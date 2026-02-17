@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -379,6 +379,49 @@ describe("execution api integration", () => {
       expect(payload.error_code).toBe("RISK_CONFIRMATION_REQUIRED");
     } finally {
       await server.close();
+    }
+  });
+
+  test("enforces signature policy when button requires signature", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "spell-api-registry-"));
+    const registryPath = path.join(tempDir, "button-registry.v1.json");
+
+    const baseRegistryRaw = await readFile(path.join(process.cwd(), "examples/button-registry.v1.json"), "utf8");
+    const baseRegistry = JSON.parse(baseRegistryRaw) as {
+      version: "v1";
+      buttons: Array<Record<string, unknown>>;
+    };
+
+    const mutated = {
+      version: baseRegistry.version,
+      buttons: baseRegistry.buttons.map((button) => {
+        if (button.button_id === "call_webhook_demo") {
+          return {
+            ...button,
+            require_signature: true
+          };
+        }
+        return button;
+      })
+    };
+    await writeFile(registryPath, `${JSON.stringify(mutated, null, 2)}\n`, "utf8");
+
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath
+    });
+
+    try {
+      const executionId = await createExecution(server.port, {
+        button_id: "call_webhook_demo",
+        actor_role: "admin"
+      });
+      const done = await waitForExecution(server.port, executionId);
+      expect(done.execution.status).toBe("failed");
+      expect(done.execution.error_code).toBe("SIGNATURE_REQUIRED");
+    } finally {
+      await server.close();
+      await rm(tempDir, { recursive: true, force: true });
     }
   });
 

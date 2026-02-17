@@ -33,7 +33,7 @@ This document records stable architecture decisions for Spell Runtime v1.
 
 ## 7. Guard responsibility split
 - runtime enforces: schema, platform, risk/billing flags, connector token presence.
-- backend enforces: role/access policy, button registry mapping, rate/size/timeout controls.
+- backend enforces: role/access policy, button registry mapping, optional signature requirement (`require_signature`), rate/size/timeout controls.
 - UI enforces: confirmations and clear risk/billing consent UX.
 
 ## 8. Logging safety policy

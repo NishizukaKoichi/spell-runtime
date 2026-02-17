@@ -18,6 +18,7 @@
         "risk": false,
         "billing": false
       },
+      "require_signature": false,
       "allowed_roles": ["admin", "operator"]
     },
     {
@@ -33,6 +34,7 @@
         "risk": false,
         "billing": false
       },
+      "require_signature": false,
       "allowed_roles": ["admin"]
     },
     {
@@ -48,6 +50,7 @@
         "risk": true,
         "billing": false
       },
+      "require_signature": false,
       "allowed_roles": ["admin"]
     }
   ]

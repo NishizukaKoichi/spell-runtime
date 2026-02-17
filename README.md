@@ -179,6 +179,8 @@ spell cast samples/call-webhook --dry-run -p event=deploy -p source=manual -p pa
   - `/Users/koichinishizuka/spell-runtime/examples/button-registry.v1.json`
 - Button registry schema:
   - `/Users/koichinishizuka/spell-runtime/examples/button-registry.v1.schema.json`
+- Registry optional policy:
+  - `require_signature` (when true, Execution API adds `--require-signature`)
 
 ## Runtime Decision Log
 

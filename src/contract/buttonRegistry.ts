@@ -13,6 +13,7 @@ export interface ButtonRegistryEntry {
   version: string;
   defaults: Record<string, unknown>;
   required_confirmations: ButtonRequiredConfirmations;
+  require_signature?: boolean;
   allowed_roles: string[];
   label?: string;
   description?: string;
@@ -60,6 +61,7 @@ const registrySchema = {
               billing: { type: "boolean" }
             }
           },
+          require_signature: { type: "boolean" },
           allowed_roles: {
             type: "array",
             minItems: 1,

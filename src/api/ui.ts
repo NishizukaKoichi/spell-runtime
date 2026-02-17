@@ -153,7 +153,7 @@ export function renderReceiptsHtml(): string {
 
     <section class="panel" id="formPanel">
       <h2>Run Button</h2>
-      <div class="hint">Guard confirmations are required only when configured by button registry.</div>
+      <div class="hint">Guard confirmations and signature policy are required only when configured by button registry.</div>
       <form id="runForm">
         <div class="row">
           <div style="flex:1">
@@ -259,7 +259,7 @@ export function renderReceiptsClientJs(): string {
     "      '<div class=\"hint\">button_id: ' + escapeHtml(button.button_id) + '</div>',",
     "      '<div class=\"hint\">spell: ' + escapeHtml(button.spell_id) + '@' + escapeHtml(button.version) + '</div>',",
     "      '<div class=\"hint\">allowed roles: ' + escapeHtml((button.allowed_roles || []).join(',')) + '</div>',",
-    "      '<div><span class=\"pill\">risk:' + String(button.required_confirmations.risk) + '</span><span class=\"pill\">billing:' + String(button.required_confirmations.billing) + '</span></div>',",
+    "      '<div><span class=\"pill\">risk:' + String(button.required_confirmations.risk) + '</span><span class=\"pill\">billing:' + String(button.required_confirmations.billing) + '</span><span class=\"pill\">signature:' + String(Boolean(button.require_signature)) + '</span></div>',",
     "      '<div style=\"margin-top:8px\"><button data-button-id=\"' + escapeHtml(button.button_id) + '\">Select</button></div>'",
     "    ].join('');",
     "    el.buttons.appendChild(card);",
@@ -303,12 +303,13 @@ export function renderReceiptsClientJs(): string {
     "",
     "  const requiredRisk = Boolean(state.selectedButton.required_confirmations && state.selectedButton.required_confirmations.risk);",
     "  const requiredBilling = Boolean(state.selectedButton.required_confirmations && state.selectedButton.required_confirmations.billing);",
+    "  const requiredSignature = Boolean(state.selectedButton.require_signature);",
     "  el.riskAck.disabled = !requiredRisk;",
     "  el.billingAck.disabled = !requiredBilling;",
     "  if (!requiredRisk) el.riskAck.checked = false;",
     "  if (!requiredBilling) el.billingAck.checked = false;",
     "",
-    "  el.guardHint.textContent = 'Required confirmations: risk=' + String(requiredRisk) + ', billing=' + String(requiredBilling);",
+    "  el.guardHint.textContent = 'Required checks: risk=' + String(requiredRisk) + ', billing=' + String(requiredBilling) + ', signature=' + String(requiredSignature);",
     "  el.roleHint.textContent = 'Allowed roles: ' + (state.selectedButton.allowed_roles || []).join(', ');",
     "}",
     "",
