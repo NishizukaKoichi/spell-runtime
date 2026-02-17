@@ -116,6 +116,8 @@ describe("spell cli integration", () => {
         process.env.PATH = previousPath;
       }
     }
+  });
+
   test("license commands add/list/remove local tokens", async () => {
     const addResult = await runCliCapture(["node", "spell", "license", "add", "dev", "token-123"]);
     expect(addResult.code).toBe(0);
