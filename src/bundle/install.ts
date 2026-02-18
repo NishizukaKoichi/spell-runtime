@@ -26,16 +26,30 @@ export interface InstallResult {
   destination: string;
 }
 
-export async function installBundle(localPath: string): Promise<InstallResult> {
-  const source = await resolveInstallSource(localPath);
+export async function installBundle(sourceInput: string): Promise<InstallResult> {
+  const source = await resolveInstallSource(sourceInput);
   try {
-    return await installBundleFromSource(source.sourceRoot);
+    return await installBundleFromSource(source.sourceRoot, source.provenance);
   } finally {
     await source.cleanup();
   }
 }
 
-async function installBundleFromSource(sourceRoot: string): Promise<InstallResult> {
+type InstallProvenance = LocalInstallProvenance | GitInstallProvenance;
+
+interface LocalInstallProvenance {
+  type: "local";
+  source: string;
+}
+
+interface GitInstallProvenance {
+  type: "git";
+  source: string;
+  ref: string;
+  commit: string;
+}
+
+async function installBundleFromSource(sourceRoot: string, provenance: InstallProvenance): Promise<InstallResult> {
   const { manifest, schemaPath } = await loadManifestFromDir(sourceRoot);
   const idKey = toIdKey(manifest.id);
 
@@ -92,6 +106,7 @@ async function installBundleFromSource(sourceRoot: string): Promise<InstallResul
   await access(path.join(targetVersionPath, "spell.yaml"));
   await access(path.join(targetVersionPath, "schema.json"));
   await access(path.join(targetVersionPath, "steps"));
+  await writeSourceMetadata(targetVersionPath, provenance);
 
   return {
     id: manifest.id,
@@ -103,6 +118,7 @@ async function installBundleFromSource(sourceRoot: string): Promise<InstallResul
 
 interface InstallSource {
   sourceRoot: string;
+  provenance: InstallProvenance;
   cleanup: () => Promise<void>;
 }
 
@@ -121,6 +137,10 @@ async function resolveInstallSource(input: string): Promise<InstallSource> {
 
   return {
     sourceRoot,
+    provenance: {
+      type: "local",
+      source: input
+    },
     cleanup: async () => {}
   };
 }
@@ -130,28 +150,78 @@ function isGitSource(value: string): boolean {
 }
 
 async function cloneGitSource(source: string): Promise<InstallSource> {
+  const { gitUrl, ref } = parsePinnedGitSource(source);
   const tempRoot = await mkdtemp(path.join(tmpdir(), "spell-install-"));
   const cloneRoot = path.join(tempRoot, "bundle");
 
   try {
-    await runGitClone(source, cloneRoot);
+    await runGitClone(gitUrl, cloneRoot, source);
+    await runGitCheckout(cloneRoot, ref, source);
+    const commit = await runGitRevParseHead(cloneRoot, source);
+
+    const sourceRoot = await realpath(cloneRoot);
+
+    return {
+      sourceRoot,
+      provenance: {
+        type: "git",
+        source,
+        ref,
+        commit
+      },
+      cleanup: async () => {
+        await rm(tempRoot, { recursive: true, force: true });
+      }
+    };
   } catch (error) {
     await rm(tempRoot, { recursive: true, force: true });
     throw error;
   }
+}
 
-  const sourceRoot = await realpath(cloneRoot);
+function parsePinnedGitSource(source: string): { gitUrl: string; ref: string } {
+  const hashIndex = source.lastIndexOf("#");
+  if (hashIndex <= 0 || hashIndex === source.length - 1) {
+    throw new SpellError("git source requires explicit ref (#<ref>)");
+  }
 
   return {
-    sourceRoot,
-    cleanup: async () => {
-      await rm(tempRoot, { recursive: true, force: true });
-    }
+    gitUrl: source.slice(0, hashIndex),
+    ref: source.slice(hashIndex + 1)
   };
 }
 
-async function runGitClone(source: string, targetDir: string): Promise<void> {
-  const child = spawn("git", ["clone", "--depth", "1", source, targetDir], {
+async function runGitClone(gitUrl: string, targetDir: string, source: string): Promise<void> {
+  await runGitCommand(
+    ["clone", "--no-checkout", gitUrl, targetDir],
+    source,
+    `failed to clone git source '${source}'`
+  );
+}
+
+async function runGitCheckout(targetDir: string, ref: string, source: string): Promise<void> {
+  await runGitCommand(
+    ["-C", targetDir, "checkout", "--detach", ref],
+    source,
+    `failed to checkout git ref '${ref}' for '${source}'`
+  );
+}
+
+async function runGitRevParseHead(targetDir: string, source: string): Promise<string> {
+  const stdout = await runGitCommand(
+    ["-C", targetDir, "rev-parse", "HEAD"],
+    source,
+    `failed to resolve git commit for '${source}'`
+  );
+  const commit = stdout.trim();
+  if (!commit) {
+    throw new SpellError(`failed to resolve git commit for '${source}': empty HEAD`);
+  }
+  return commit;
+}
+
+async function runGitCommand(args: string[], source: string, failureMessage: string): Promise<string> {
+  const child = spawn("git", args, {
     shell: false,
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -173,22 +243,30 @@ async function runGitClone(source: string, targetDir: string): Promise<void> {
         return;
       }
 
-      reject(new SpellError(`failed to run git clone for '${source}': ${error.message}`));
+      reject(new SpellError(`failed to run git command for '${source}': ${error.message}`));
     });
 
     child.once("close", (exitCode) => {
       if ((exitCode ?? 1) !== 0) {
-        const detail = (stderr.trim() || stdout.trim() || `git clone exited with code ${exitCode ?? 1}`).replace(
-          /\s+/g,
-          " "
-        );
-        reject(new SpellError(`failed to clone git source '${source}': ${detail}`));
+        const detail = (stderr.trim() || stdout.trim() || `git exited with code ${exitCode ?? 1}`).replace(/\s+/g, " ");
+        reject(new SpellError(`${failureMessage}: ${detail}`));
         return;
       }
 
       resolve();
     });
   });
+
+  return stdout;
+}
+
+async function writeSourceMetadata(targetVersionPath: string, provenance: InstallProvenance): Promise<void> {
+  const payload = {
+    ...provenance,
+    installed_at: new Date().toISOString()
+  };
+
+  await writeFile(path.join(targetVersionPath, "source.json"), `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
 async function copyDirectorySafe(sourceDir: string, targetDir: string, sourceRoot: string): Promise<void> {

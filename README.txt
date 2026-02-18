@@ -30,7 +30,7 @@ Manual npx (local package):
   npx --yes --package file:. spell --help
 
 2. CLI commands
-- spell install <local-path>
+- spell install <source>
 - spell list
 - spell inspect <id> [--version x.y.z]
 - spell cast <id> [--version x.y.z] [-p key=value ...] [--input input.json] [--dry-run] [--yes] [--allow-billing] [--allow-unsigned] [--require-signature] [--verbose] [--profile <name>]
@@ -45,14 +45,17 @@ Manual npx (local package):
 - spell log <execution-id>
 
 2.1 Install sources
-- spell install <local-path> keeps the same CLI interface and now accepts:
+- spell install <source> accepts:
   - local bundle paths (existing behavior)
-  - git URLs:
-    - https://...
-    - ssh://...
-    - git@...
+  - pinned git URLs with explicit refs:
+    - https://...#<ref>
+    - ssh://...#<ref>
+    - git@...#<ref>
 
-When a git URL is provided, runtime performs a shallow clone (git clone --depth 1) into a temporary directory and installs from the cloned repository root.
+Git sources must include #<ref>. If omitted, install fails with:
+  git source requires explicit ref (#<ref>)
+
+When a git source is provided, runtime clones the repository, checks out the requested ref, resolves the checked-out commit SHA (git rev-parse HEAD), and installs from that checkout.
 
 Limitations:
 - git must be installed and available on PATH.
@@ -62,8 +65,16 @@ Limitations:
 3. Storage layout
 - Spells: ~/.spell/spells/<id_key>/<version>/
 - ID index: ~/.spell/spells/<id_key>/spell.id.txt
+- Install provenance: ~/.spell/spells/<id_key>/<version>/source.json
 - Logs: ~/.spell/logs/<timestamp>_<id>_<version>.json
 - Billing entitlement records: ~/.spell/licenses/*.json
+
+source.json captures install provenance:
+- type: local or git
+- source: original install input
+- ref: requested git ref (git installs only)
+- commit: resolved git commit SHA (git installs only)
+- installed_at: install timestamp (ISO-8601)
 
 id_key is fixed as base64url(utf8(id)).
 - id is the logical identifier (display, package identity).

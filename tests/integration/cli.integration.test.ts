@@ -8,6 +8,7 @@ import nock from "nock";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { runCli } from "../../src/cli/index";
 import { computeBundleDigest } from "../../src/signature/bundleDigest";
+import { toIdKey } from "../../src/util/idKey";
 
 describe("spell cli integration", () => {
   let originalHome: string | undefined;
@@ -53,32 +54,60 @@ describe("spell cli integration", () => {
     const logsDir = path.join(tempHome, ".spell", "logs");
     const logs = await readdir(logsDir);
     expect(logs.length).toBeGreaterThan(0);
+
+    const sourceMetadata = JSON.parse(
+      await readFile(installedSourceMetadataPath(tempHome, "fixtures/hello-host", "1.0.0"), "utf8")
+    ) as Record<string, unknown>;
+    expect(sourceMetadata).toMatchObject({
+      type: "local",
+      source: fixture
+    });
+    expect(Number.isNaN(Date.parse(String(sourceMetadata.installed_at)))).toBe(false);
   });
 
   test("install supports git https sources", async () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
     const gitRepo = await createBareGitRepoFromSource(fixture);
     const gitUrl = "https://spell.test/hello-host.git";
+    const gitSource = `${gitUrl}#main`;
 
     try {
       await withGitUrlRewrite(gitUrl, gitRepo.remotePath, async () => {
-        expect(await runCli(["node", "spell", "install", gitUrl])).toBe(0);
+        expect(await runCli(["node", "spell", "install", gitSource])).toBe(0);
       });
 
       expect(await runCli(["node", "spell", "inspect", "fixtures/hello-host"])).toBe(0);
+
+      const sourceMetadata = JSON.parse(
+        await readFile(installedSourceMetadataPath(tempHome, "fixtures/hello-host", "1.0.0"), "utf8")
+      ) as Record<string, unknown>;
+      expect(sourceMetadata).toMatchObject({
+        type: "git",
+        source: gitSource,
+        ref: "main",
+        commit: gitRepo.commit
+      });
+      expect(Number.isNaN(Date.parse(String(sourceMetadata.installed_at)))).toBe(false);
     } finally {
       await rm(gitRepo.tempDir, { recursive: true, force: true });
     }
   });
 
+  test("install from git source requires explicit ref", async () => {
+    const result = await runCliCapture(["node", "spell", "install", "https://spell.test/repo.git"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("git source requires explicit ref (#<ref>)");
+  });
+
   test("install from git source reports clone failure", async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), "spell-git-missing-"));
     const gitUrl = "https://spell.test/missing.git";
+    const gitSource = `${gitUrl}#main`;
     const missingRemote = path.join(tempDir, "missing.git");
 
     try {
       await withGitUrlRewrite(gitUrl, missingRemote, async () => {
-        const result = await runCliCapture(["node", "spell", "install", gitUrl]);
+        const result = await runCliCapture(["node", "spell", "install", gitSource]);
         expect(result.code).toBe(1);
         expect(result.stderr).toContain("failed to clone git source");
       });
@@ -91,10 +120,11 @@ describe("spell cli integration", () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
     const gitRepo = await createBareGitRepoFromSource(fixture, { removeSpellYaml: true });
     const gitUrl = "https://spell.test/no-manifest.git";
+    const gitSource = `${gitUrl}#main`;
 
     try {
       await withGitUrlRewrite(gitUrl, gitRepo.remotePath, async () => {
-        const result = await runCliCapture(["node", "spell", "install", gitUrl]);
+        const result = await runCliCapture(["node", "spell", "install", gitSource]);
         expect(result.code).toBe(1);
         expect(result.stderr).toContain("spell.yaml not found");
       });
@@ -108,7 +138,7 @@ describe("spell cli integration", () => {
     process.env.PATH = "";
 
     try {
-      const result = await runCliCapture(["node", "spell", "install", "https://spell.test/repo.git"]);
+      const result = await runCliCapture(["node", "spell", "install", "https://spell.test/repo.git#main"]);
       expect(result.code).toBe(1);
       expect(result.stderr).toContain("git executable not found");
     } finally {
@@ -872,7 +902,7 @@ describe("spell cli integration", () => {
 async function createBareGitRepoFromSource(
   sourceDir: string,
   options: { removeSpellYaml?: boolean } = {}
-): Promise<{ tempDir: string; remotePath: string }> {
+): Promise<{ tempDir: string; remotePath: string; commit: string }> {
   const tempDir = await mkdtemp(path.join(tmpdir(), "spell-git-source-"));
   const workPath = path.join(tempDir, "work");
   const remotePath = path.join(tempDir, "bundle.git");
@@ -892,8 +922,13 @@ async function createBareGitRepoFromSource(
   await runCommand("git", ["init", "--bare", remotePath], tempDir);
   await runCommand("git", ["remote", "add", "origin", remotePath], workPath);
   await runCommand("git", ["push", "origin", "main"], workPath);
+  const commit = (await runCommand("git", ["rev-parse", "HEAD"], workPath)).stdout.trim();
 
-  return { tempDir, remotePath };
+  return { tempDir, remotePath, commit };
+}
+
+function installedSourceMetadataPath(homeDir: string, spellId: string, version: string): string {
+  return path.join(homeDir, ".spell", "spells", toIdKey(spellId), version, "source.json");
 }
 
 async function withGitUrlRewrite<T>(gitUrl: string, targetRepoPath: string, run: () => Promise<T>): Promise<T> {
