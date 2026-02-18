@@ -155,8 +155,7 @@ async function cloneGitSource(source: string): Promise<InstallSource> {
   const cloneRoot = path.join(tempRoot, "bundle");
 
   try {
-    await runGitClone(gitUrl, cloneRoot, source);
-    await runGitCheckout(cloneRoot, ref, source);
+    await runGitClone(gitUrl, cloneRoot, ref, source);
     const commit = await runGitRevParseHead(cloneRoot, source);
 
     const sourceRoot = await realpath(cloneRoot);
@@ -191,19 +190,11 @@ function parsePinnedGitSource(source: string): { gitUrl: string; ref: string } {
   };
 }
 
-async function runGitClone(gitUrl: string, targetDir: string, source: string): Promise<void> {
+async function runGitClone(gitUrl: string, targetDir: string, ref: string, source: string): Promise<void> {
   await runGitCommand(
-    ["clone", "--no-checkout", gitUrl, targetDir],
+    ["clone", "--depth", "1", "--branch", ref, gitUrl, targetDir],
     source,
     `failed to clone git source '${source}'`
-  );
-}
-
-async function runGitCheckout(targetDir: string, ref: string, source: string): Promise<void> {
-  await runGitCommand(
-    ["-C", targetDir, "checkout", "--detach", ref],
-    source,
-    `failed to checkout git ref '${ref}' for '${source}'`
   );
 }
 
