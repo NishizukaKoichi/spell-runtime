@@ -4,19 +4,20 @@ Minimal CLI runtime for SpellBundle v1.
 
 1. Setup
 - Node.js >= 20
-- npm
+- pnpm (recommended)
+- npm (supported)
 
 Install dependencies:
-  npm i
+  pnpm install
 
 Build:
-  npm run build
+  pnpm run build
 
 Test:
-  npm test
+  pnpm test
 
 Local dev:
-  npm run dev -- --help
+  pnpm run dev -- --help
 
 Binary smoke checks:
   npm run smoke:link
@@ -236,6 +237,29 @@ spell license list prints entitlement summary columns (issuer/mode/currency/max_
 6) Show execution log
   spell log <execution-id>
 
+9.1 OSS release (pnpm + GitHub Actions)
+Automation file:
+  .github/workflows/release.yml
+
+Prerequisites:
+- npm account with 2FA enabled
+- GitHub repository secret NPM_TOKEN (publish-capable npm token)
+
+Local release checks:
+  pnpm install
+  pnpm run typecheck
+  pnpm run lint
+  pnpm run build
+  pnpm test
+  pnpm run pack:check
+
+Tag-based release flow:
+  npm version patch
+  git push --follow-tags
+
+Tag push vX.Y.Z triggers GitHub Actions release and runs npm publish.
+The workflow verifies that tag version matches package.json.
+
 10. UI connection spec
 - Decision-complete button integration spec:
   /Users/koichinishizuka/spell-runtime/docs/ui-connection-spec-v1.md
@@ -267,6 +291,11 @@ Quick try:
 
 13. Runtime decision log
 - /Users/koichinishizuka/spell-runtime/docs/runtime-decisions-v1.md
+
+13.1 Repository policies
+- /Users/koichinishizuka/spell-runtime/CONTRIBUTING.md
+- /Users/koichinishizuka/spell-runtime/CODE_OF_CONDUCT.md
+- /Users/koichinishizuka/spell-runtime/SECURITY.md
 
 14. Execution API (async)
 Start:

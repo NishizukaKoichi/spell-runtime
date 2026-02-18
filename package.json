@@ -4,8 +4,10 @@
   "description": "Minimal CLI runtime for SpellBundle v1",
   "license": "MIT",
   "type": "commonjs",
+  "packageManager": "pnpm@10.13.1",
   "files": [
     "dist",
+    "README.md",
     "README.txt",
     "LICENSE"
   ],
@@ -26,8 +28,12 @@
     "prepare": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "pack:check": "npm pack --dry-run",
     "smoke:link": "npm run build && npm link && spell --help",
     "smoke:npx": "npm run build && npx --yes --package file:. spell --help"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "ajv": "^8.17.1",

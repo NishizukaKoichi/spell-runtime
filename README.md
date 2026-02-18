@@ -5,18 +5,19 @@ Minimal CLI runtime for SpellBundle v1.
 ## Setup
 
 - Node.js >= 20
-- npm
+- pnpm (recommended)
+- npm (supported)
 
 ```bash
-npm i
-npm run build
-npm test
+pnpm install
+pnpm run build
+pnpm test
 ```
 
 Local dev:
 
 ```bash
-npm run dev -- --help
+pnpm run dev -- --help
 ```
 
 ## Install as CLI
@@ -277,6 +278,38 @@ spell cast fixtures/hello-host -p name=world
 spell log <execution-id>
 ```
 
+## OSS Release (pnpm + GitHub Actions)
+
+Release automation is defined in:
+
+- `.github/workflows/release.yml`
+
+Prerequisites:
+
+- npm account with `2FA` enabled
+- GitHub repository secret `NPM_TOKEN` (publish-capable npm token)
+
+Local release checks:
+
+```bash
+pnpm install
+pnpm run typecheck
+pnpm run lint
+pnpm run build
+pnpm test
+pnpm run pack:check
+```
+
+Tag-based release flow:
+
+```bash
+npm version patch
+git push --follow-tags
+```
+
+Pushing tag `vX.Y.Z` triggers GitHub Actions release and runs `npm publish`.
+The workflow verifies that the git tag version matches `package.json`.
+
 ## Real-Use Sample Spells
 
 These are product-facing examples (separate from test fixtures):
@@ -309,6 +342,12 @@ spell cast samples/call-webhook --dry-run -p event=deploy -p source=manual -p pa
 ## Runtime Decision Log
 
 - `/Users/koichinishizuka/spell-runtime/docs/runtime-decisions-v1.md`
+
+## Repository Policies
+
+- `/Users/koichinishizuka/spell-runtime/CONTRIBUTING.md`
+- `/Users/koichinishizuka/spell-runtime/CODE_OF_CONDUCT.md`
+- `/Users/koichinishizuka/spell-runtime/SECURITY.md`
 
 ## Execution API (Async)
 
