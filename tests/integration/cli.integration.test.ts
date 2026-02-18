@@ -93,6 +93,65 @@ describe("spell cli integration", () => {
     }
   });
 
+  test("registry set/show and install resolves a registry source", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    const gitRepo = await createBareGitRepoFromSource(fixture);
+    const gitUrl = "https://spell.test/hello-host.git";
+    const gitSource = `${gitUrl}#main`;
+    const indexUrl = "https://registry.test/spell-index.v1.json";
+
+    try {
+      expect(await runCli(["node", "spell", "registry", "set", indexUrl])).toBe(0);
+
+      const showResult = await runCliCapture(["node", "spell", "registry", "show"]);
+      expect(showResult.code).toBe(0);
+      expect(showResult.stdout).toContain("name\turl");
+      expect(showResult.stdout).toContain(`default\t${indexUrl}`);
+
+      nock("https://registry.test").get("/spell-index.v1.json").reply(200, {
+        version: "v1",
+        spells: [
+          {
+            id: "fixtures/hello-host",
+            version: "1.0.0",
+            source: gitSource
+          }
+        ]
+      });
+
+      await withGitUrlRewrite(gitUrl, gitRepo.remotePath, async () => {
+        expect(await runCli(["node", "spell", "install", "registry:fixtures/hello-host@1.0.0"])).toBe(0);
+      });
+
+      const sourceMetadata = JSON.parse(
+        await readFile(installedSourceMetadataPath(tempHome, "fixtures/hello-host", "1.0.0"), "utf8")
+      ) as Record<string, unknown>;
+      expect(sourceMetadata).toMatchObject({
+        type: "git",
+        source: gitSource,
+        ref: "main",
+        commit: gitRepo.commit
+      });
+      expect(Number.isNaN(Date.parse(String(sourceMetadata.installed_at)))).toBe(false);
+    } finally {
+      await rm(gitRepo.tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("registry install reports missing entry", async () => {
+    const indexUrl = "https://registry.test/spell-index.v1.json";
+    expect(await runCli(["node", "spell", "registry", "set", indexUrl])).toBe(0);
+
+    nock("https://registry.test").get("/spell-index.v1.json").reply(200, {
+      version: "v1",
+      spells: []
+    });
+
+    const result = await runCliCapture(["node", "spell", "install", "registry:fixtures/hello-host@1.0.0"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("registry entry not found: fixtures/hello-host@1.0.0");
+  });
+
   test("install from git source requires explicit ref", async () => {
     const result = await runCliCapture(["node", "spell", "install", "https://spell.test/repo.git"]);
     expect(result.code).toBe(1);

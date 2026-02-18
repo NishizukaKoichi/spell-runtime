@@ -18,6 +18,7 @@ import { toIdKey } from "../util/idKey";
 import { ensureSpellDirs, spellsRoot } from "../util/paths";
 import { SpellError } from "../util/errors";
 import { loadManifestFromDir } from "./manifest";
+import { resolveRegistryInstallSource } from "./registry";
 
 export interface InstallResult {
   id: string;
@@ -27,7 +28,8 @@ export interface InstallResult {
 }
 
 export async function installBundle(sourceInput: string): Promise<InstallResult> {
-  const source = await resolveInstallSource(sourceInput);
+  const resolvedInput = isRegistrySource(sourceInput) ? await resolveRegistryInstallSource(sourceInput) : sourceInput;
+  const source = await resolveInstallSource(resolvedInput);
   try {
     return await installBundleFromSource(source.sourceRoot, source.provenance);
   } finally {
@@ -120,6 +122,10 @@ interface InstallSource {
   sourceRoot: string;
   provenance: InstallProvenance;
   cleanup: () => Promise<void>;
+}
+
+function isRegistrySource(value: string): boolean {
+  return value.startsWith("registry:");
 }
 
 async function resolveInstallSource(input: string): Promise<InstallSource> {

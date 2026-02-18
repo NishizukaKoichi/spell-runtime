@@ -26,6 +26,10 @@ export function licensesRoot(): string {
   return path.join(spellHome(), "licenses");
 }
 
+export function registryConfigPath(): string {
+  return path.join(spellHome(), "registry.json");
+}
+
 export async function ensureSpellDirs(): Promise<void> {
   await mkdir(spellsRoot(), { recursive: true });
   await mkdir(logsRoot(), { recursive: true });

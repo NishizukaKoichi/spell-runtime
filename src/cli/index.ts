@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { Command } from "commander";
 import { installBundle } from "../bundle/install";
+import { readRegistryConfigIfExists, setDefaultRegistryIndex } from "../bundle/registry";
 import { listInstalledSpells, readSchemaFromManifest, resolveInstalledBundle, summarizeSchema } from "../bundle/store";
 import { generateSigningKeypair, signBundleFromPrivateKey } from "../signature/signing";
 import { castSpell } from "../runner/cast";
@@ -22,11 +23,38 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
 
   program
     .command("install")
-    .description("Install a spell bundle from local path or git URL")
-    .argument("<source>", "Path to local spell bundle or git URL (git requires #<ref>)")
+    .description("Install a spell bundle from local path, git URL, or registry locator")
+    .argument("<source>", "Path, git URL (requires #<ref>), or registry:<id>@<version>")
     .action(async (source: string) => {
       const result = await installBundle(source);
       process.stdout.write(`${result.id}@${result.version}\n`);
+    });
+
+  const registry = program.command("registry").description("Manage spell registry indexes");
+
+  registry
+    .command("set")
+    .description("Set or replace the default registry index URL")
+    .argument("<url>", "URL to spell-index.v1.json")
+    .action(async (url: string) => {
+      const config = await setDefaultRegistryIndex(url);
+      process.stdout.write(`default\t${config.indexes[0].url}\n`);
+    });
+
+  registry
+    .command("show")
+    .description("Show configured registry indexes")
+    .action(async () => {
+      const config = await readRegistryConfigIfExists();
+      if (!config) {
+        process.stdout.write("No registry indexes configured\n");
+        return;
+      }
+
+      process.stdout.write("name\turl\n");
+      for (const index of config.indexes) {
+        process.stdout.write(`${index.name}\t${index.url}\n`);
+      }
     });
 
   program

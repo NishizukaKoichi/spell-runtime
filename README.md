@@ -45,6 +45,8 @@ npm run smoke:npx
 ## Commands
 
 - `spell install <source>`
+- `spell registry set <url>`
+- `spell registry show`
 - `spell list`
 - `spell inspect <id> [--version x.y.z]`
 - `spell cast <id> [--version x.y.z] [-p key=value ...] [--input input.json] [--dry-run] [--yes] [--allow-billing] [--allow-unsigned] [--require-signature] [--verbose] [--profile <name>]`
@@ -63,6 +65,8 @@ npm run smoke:npx
 `spell install <source>` accepts:
 
 - local bundle paths (existing behavior)
+- registry locators with explicit id+version:
+  - `registry:<id>@<version>`
 - pinned git URLs with an explicit ref suffix:
   - `https://...#<ref>`
   - `ssh://...#<ref>`
@@ -73,6 +77,32 @@ Git sources must include `#<ref>`. If omitted, install fails with:
 - `git source requires explicit ref (#<ref>)`
 
 When a git source is provided, runtime clones the repository, checks out the requested ref, resolves the checked-out commit SHA (`git rev-parse HEAD`), and installs from that checkout.
+
+Registry setup example:
+
+```bash
+spell registry set https://registry.example.test/spell-index.v1.json
+spell registry show
+spell install registry:fixtures/hello-host@1.0.0
+```
+
+Registry config file (`~/.spell/registry.json`):
+
+```json
+{
+  "version": "v1",
+  "indexes": [{ "name": "default", "url": "https://registry.example.test/spell-index.v1.json" }]
+}
+```
+
+Minimal registry index schema:
+
+```json
+{
+  "version": "v1",
+  "spells": [{ "id": "fixtures/hello-host", "version": "1.0.0", "source": "https://spell.test/hello-host.git#main" }]
+}
+```
 
 Limitations:
 
@@ -198,7 +228,7 @@ Use these `effect.type` words where possible:
 ## v1 Limitations (Intentionally Not Implemented)
 
 - name search or ambiguous resolution (id only)
-- registry/marketplace integration
+- registry discovery/marketplace UX integration
 - real billing execution (Stripe)
 - DAG/parallel/rollback/self-healing
 - advanced templating language (only `{{INPUT.*}}` and `{{ENV.*}}`)
