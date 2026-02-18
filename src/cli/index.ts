@@ -107,7 +107,8 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
     .option("--dry-run", "Validate and summarize only", false)
     .option("--yes", "Acknowledge high or critical risk", false)
     .option("--allow-billing", "Allow billing-enabled spells", false)
-    .option("--require-signature", "Require verified signature", false)
+    .option("--require-signature", "Require verified signature (default)", true)
+    .option("--allow-unsigned", "Allow unsigned bundles (overrides signature requirement)", false)
     .option("--verbose", "Verbose logs", false)
     .option("--profile <name>", "Reserved for future use")
     .action(
@@ -121,10 +122,12 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
           yes: boolean;
           allowBilling: boolean;
           requireSignature: boolean;
+          allowUnsigned: boolean;
           verbose: boolean;
           profile?: string;
         }
       ) => {
+        const requireSignature = options.allowUnsigned ? false : options.requireSignature;
         const result = await castSpell({
           id,
           version: options.version,
@@ -133,7 +136,7 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
           dryRun: options.dryRun,
           yes: options.yes,
           allowBilling: options.allowBilling,
-          requireSignature: options.requireSignature,
+          requireSignature,
           verbose: options.verbose,
           profile: options.profile
         });

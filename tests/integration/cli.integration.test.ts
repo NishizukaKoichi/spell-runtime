@@ -45,8 +45,10 @@ describe("spell cli integration", () => {
     expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
     expect(await runCli(["node", "spell", "list"])).toBe(0);
     expect(await runCli(["node", "spell", "inspect", "fixtures/hello-host"])).toBe(0);
-    expect(await runCli(["node", "spell", "cast", "fixtures/hello-host", "--dry-run", "-p", "name=world"])).toBe(0);
-    expect(await runCli(["node", "spell", "cast", "fixtures/hello-host", "-p", "name=world"])).toBe(0);
+    expect(
+      await runCli(["node", "spell", "cast", "fixtures/hello-host", "--allow-unsigned", "--dry-run", "-p", "name=world"])
+    ).toBe(0);
+    expect(await runCli(["node", "spell", "cast", "fixtures/hello-host", "--allow-unsigned", "-p", "name=world"])).toBe(0);
 
     const logsDir = path.join(tempHome, ".spell", "logs");
     const logs = await readdir(logsDir);
@@ -140,7 +142,7 @@ describe("spell cli integration", () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/billing-guard");
     expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
 
-    const result = await runCliCapture(["node", "spell", "cast", "fixtures/billing-guard"]);
+    const result = await runCliCapture(["node", "spell", "cast", "fixtures/billing-guard", "--allow-unsigned"]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("billing enabled requires --allow-billing");
   });
@@ -149,7 +151,14 @@ describe("spell cli integration", () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/billing-guard");
     expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
 
-    const result = await runCliCapture(["node", "spell", "cast", "fixtures/billing-guard", "--allow-billing"]);
+    const result = await runCliCapture([
+      "node",
+      "spell",
+      "cast",
+      "fixtures/billing-guard",
+      "--allow-unsigned",
+      "--allow-billing"
+    ]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("billing enabled requires license token (spell license add ...)");
   });
@@ -159,7 +168,14 @@ describe("spell cli integration", () => {
     expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
     expect(await runCli(["node", "spell", "license", "add", "dev", "token-123"])).toBe(0);
 
-    const result = await runCliCapture(["node", "spell", "cast", "fixtures/billing-guard", "--allow-billing"]);
+    const result = await runCliCapture([
+      "node",
+      "spell",
+      "cast",
+      "fixtures/billing-guard",
+      "--allow-unsigned",
+      "--allow-billing"
+    ]);
     expect(result.code).toBe(0);
 
     const logsDir = path.join(tempHome, ".spell", "logs");
@@ -175,7 +191,7 @@ describe("spell cli integration", () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/risk-guard");
     expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
 
-    const result = await runCliCapture(["node", "spell", "cast", "fixtures/risk-guard"]);
+    const result = await runCliCapture(["node", "spell", "cast", "fixtures/risk-guard", "--allow-unsigned"]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("risk high requires --yes");
   });
@@ -184,7 +200,7 @@ describe("spell cli integration", () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/permissions-guard");
     expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
 
-    const result = await runCliCapture(["node", "spell", "cast", "fixtures/permissions-guard"]);
+    const result = await runCliCapture(["node", "spell", "cast", "fixtures/permissions-guard", "--allow-unsigned"]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("missing connector token CONNECTOR_GITHUB_TOKEN");
   });
@@ -193,7 +209,7 @@ describe("spell cli integration", () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/platform-guard");
     expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
 
-    const result = await runCliCapture(["node", "spell", "cast", "fixtures/platform-guard"]);
+    const result = await runCliCapture(["node", "spell", "cast", "fixtures/platform-guard", "--allow-unsigned"]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("platform mismatch:");
   });
@@ -216,7 +232,15 @@ describe("spell cli integration", () => {
 
     nock("https://status.example.test").get("/health/abc123").reply(200, "ok");
 
-    const result = await runCliCapture(["node", "spell", "cast", "fixtures/http-step", "-p", "project=demo"]);
+    const result = await runCliCapture([
+      "node",
+      "spell",
+      "cast",
+      "fixtures/http-step",
+      "--allow-unsigned",
+      "-p",
+      "project=demo"
+    ]);
     expect(result.code).toBe(0);
 
     const logsDir = path.join(tempHome, ".spell", "logs");
@@ -248,6 +272,7 @@ describe("spell cli integration", () => {
       "spell",
       "cast",
       "samples/call-webhook",
+      "--allow-unsigned",
       "-p",
       "event=deploy",
       "-p",
@@ -263,7 +288,15 @@ describe("spell cli integration", () => {
     const sample = path.join(process.cwd(), "examples/spells/repo-ops");
     expect(await runCli(["node", "spell", "install", sample])).toBe(0);
 
-    const result = await runCliCapture(["node", "spell", "cast", "samples/repo-ops", "-p", "branch=main"]);
+    const result = await runCliCapture([
+      "node",
+      "spell",
+      "cast",
+      "samples/repo-ops",
+      "--allow-unsigned",
+      "-p",
+      "branch=main"
+    ]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("missing connector token CONNECTOR_GITHUB_TOKEN");
   });
@@ -272,7 +305,15 @@ describe("spell cli integration", () => {
     const sample = path.join(process.cwd(), "examples/spells/publish-site");
     expect(await runCli(["node", "spell", "install", sample])).toBe(0);
 
-    const blocked = await runCliCapture(["node", "spell", "cast", "samples/publish-site", "-p", "site_name=demo"]);
+    const blocked = await runCliCapture([
+      "node",
+      "spell",
+      "cast",
+      "samples/publish-site",
+      "--allow-unsigned",
+      "-p",
+      "site_name=demo"
+    ]);
     expect(blocked.code).toBe(1);
     expect(blocked.stderr).toContain("risk high requires --yes");
 
@@ -281,6 +322,7 @@ describe("spell cli integration", () => {
       "spell",
       "cast",
       "samples/publish-site",
+      "--allow-unsigned",
       "--yes",
       "-p",
       "site_name=demo"
@@ -299,6 +341,7 @@ describe("spell cli integration", () => {
       "spell",
       "cast",
       "fixtures/hello-host",
+      "--allow-unsigned",
       "-p",
       "name=env-secret-value",
       "-p",
@@ -324,7 +367,15 @@ describe("spell cli integration", () => {
     expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
 
     process.env.SPELL_RUNTIME_INPUT_MAX_BYTES = "8";
-    const result = await runCliCapture(["node", "spell", "cast", "fixtures/hello-host", "-p", "name=world"]);
+    const result = await runCliCapture([
+      "node",
+      "spell",
+      "cast",
+      "fixtures/hello-host",
+      "--allow-unsigned",
+      "-p",
+      "name=world"
+    ]);
 
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("merged input is");
@@ -344,7 +395,15 @@ describe("spell cli integration", () => {
       expect(await runCli(["node", "spell", "install", bundleDir])).toBe(0);
 
       process.env.SPELL_RUNTIME_STEP_TIMEOUT_MS = "50";
-      const result = await runCliCapture(["node", "spell", "cast", "tests/step-timeout", "-p", "name=world"]);
+      const result = await runCliCapture([
+        "node",
+        "spell",
+        "cast",
+        "tests/step-timeout",
+        "--allow-unsigned",
+        "-p",
+        "name=world"
+      ]);
 
       expect(result.code).toBe(1);
       expect(result.stderr).toContain("shell step 'slow' timed out after 50ms");
@@ -367,7 +426,15 @@ describe("spell cli integration", () => {
 
       process.env.SPELL_RUNTIME_STEP_TIMEOUT_MS = "1000";
       process.env.SPELL_RUNTIME_EXECUTION_TIMEOUT_MS = "80";
-      const result = await runCliCapture(["node", "spell", "cast", "tests/execution-timeout", "-p", "name=world"]);
+      const result = await runCliCapture([
+        "node",
+        "spell",
+        "cast",
+        "tests/execution-timeout",
+        "--allow-unsigned",
+        "-p",
+        "name=world"
+      ]);
 
       expect(result.code).toBe(1);
       expect(result.stderr).toContain("cast execution timed out after 80ms while running step 'slow'");
@@ -489,6 +556,26 @@ describe("spell cli integration", () => {
     } finally {
       await rm(bundleDir, { recursive: true, force: true });
     }
+  });
+
+  test("cast requires signature by default and --allow-unsigned bypasses for unsigned bundles", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
+
+    const blocked = await runCliCapture(["node", "spell", "cast", "fixtures/hello-host", "-p", "name=world"]);
+    expect(blocked.code).toBe(1);
+    expect(blocked.stderr).toContain("signature required:");
+
+    const allowed = await runCliCapture([
+      "node",
+      "spell",
+      "cast",
+      "fixtures/hello-host",
+      "--allow-unsigned",
+      "-p",
+      "name=world"
+    ]);
+    expect(allowed.code).toBe(0);
   });
 
   test("sign keygen + sign bundle commands produce a verifiable signature", async () => {
@@ -690,7 +777,15 @@ describe("spell cli integration", () => {
 
       expect(await runCli(["node", "spell", "install", spellDir])).toBe(0);
 
-      const result = await runCliCapture(["node", "spell", "cast", "tests/docker-hello", "-p", "name=world"]);
+      const result = await runCliCapture([
+        "node",
+        "spell",
+        "cast",
+        "tests/docker-hello",
+        "--allow-unsigned",
+        "-p",
+        "name=world"
+      ]);
       expect(result.code).toBe(0);
 
       const logsDir = path.join(tempHome, ".spell", "logs");

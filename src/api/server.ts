@@ -414,7 +414,11 @@ async function runJob(
   if (dryRun) args.push("--dry-run");
   if (confirmations.risk) args.push("--yes");
   if (confirmations.billing) args.push("--allow-billing");
-  if (requireSignature) args.push("--require-signature");
+  if (requireSignature) {
+    args.push("--require-signature");
+  } else {
+    args.push("--allow-unsigned");
+  }
 
   const running: ExecutionJob = {
     ...job,

@@ -33,7 +33,7 @@ Manual npx (local package):
 - spell install <local-path>
 - spell list
 - spell inspect <id> [--version x.y.z]
-- spell cast <id> [--version x.y.z] [-p key=value ...] [--input input.json] [--dry-run] [--yes] [--allow-billing] [--require-signature] [--verbose] [--profile <name>]
+- spell cast <id> [--version x.y.z] [-p key=value ...] [--input input.json] [--dry-run] [--yes] [--allow-billing] [--allow-unsigned] [--require-signature] [--verbose] [--profile <name>]
 - spell license add <name> <token>
 - spell license list
 - spell license remove <name>
@@ -78,7 +78,7 @@ Cast performs these checks before execution:
 - Bundle resolution by id (and optional version)
 - Input assembly (--input + -p overrides)
 - JSON Schema validation by Ajv
-- Optional signature verification (--require-signature)
+- Signature verification (default on; bypass only with --allow-unsigned)
 - Platform guard
 - Risk guard (high/critical requires --yes)
 - Billing guard (billing.enabled requires --allow-billing)
@@ -128,8 +128,10 @@ Use these effect.type words where possible:
 - docker env passthrough beyond connector tokens
 
 8.1 Signature (sign + verify)
-If a bundle contains spell.sig.json, you can require signature verification at execution time:
-  spell cast <id> --require-signature ...
+spell cast requires signature verification by default. To bypass this for unsigned bundle workflows:
+  spell cast <id> --allow-unsigned ...
+
+--require-signature remains accepted for backward compatibility.
 
 Signing flow:
   spell sign keygen samples --key-id default --out-dir .spell-keys
@@ -172,7 +174,8 @@ Notes:
 - Button registry schema:
   /Users/koichinishizuka/spell-runtime/examples/button-registry.v1.schema.json
 - Registry optional policy:
-  require_signature (when true, Execution API adds --require-signature)
+  require_signature=true: Execution API enforces signature (--require-signature)
+  require_signature=false or omitted: Execution API opts into unsigned path (--allow-unsigned)
 
 11. Install from npm
 Global install:
