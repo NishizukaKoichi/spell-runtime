@@ -209,7 +209,7 @@ describe("spell cli integration", () => {
     }
   });
 
-  test("license commands add/list/remove local tokens", async () => {
+  test("license commands add/inspect/revoke/restore/remove local tokens", async () => {
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     const publicKeyDer = publicKey.export({ format: "der", type: "spki" }) as Buffer;
     expect(await runCli(["node", "spell", "trust", "add", "entitlement-dev", publicKeyDer.toString("base64url"), "--key-id", "k1"])).toBe(0);
@@ -229,11 +229,43 @@ describe("spell cli integration", () => {
     const addResult = await runCliCapture(["node", "spell", "license", "add", "dev", token]);
     expect(addResult.code).toBe(0);
 
+    const inspectResult = await runCliCapture(["node", "spell", "license", "inspect", "dev"]);
+    expect(inspectResult.code).toBe(0);
+    expect(inspectResult.stdout).toContain("issuer: entitlement-dev");
+    expect(inspectResult.stdout).toContain("mode: on_success");
+    expect(inspectResult.stdout).toContain("currency: USD");
+    expect(inspectResult.stdout).toContain("max_amount: 25");
+    expect(inspectResult.stdout).toContain("window:");
+    expect(inspectResult.stdout).toContain("revoked: false");
+
     const listResult = await runCliCapture(["node", "spell", "license", "list"]);
     expect(listResult.code).toBe(0);
-    expect(listResult.stdout).toContain("name\tissuer\tmode\tcurrency\tmax_amount\texpires_at\tupdated_at");
+    expect(listResult.stdout).toContain("name\tissuer\tmode\tcurrency\tmax_amount\texpires_at\trevoked\tupdated_at");
     expect(listResult.stdout).toContain("dev\tentitlement-dev\ton_success\tUSD\t25\t");
+    expect(listResult.stdout).toContain("\tfalse\t");
     expect(listResult.stdout).not.toContain(token);
+
+    const revokeResult = await runCliCapture([
+      "node",
+      "spell",
+      "license",
+      "revoke",
+      "dev",
+      "--reason",
+      "incident window"
+    ]);
+    expect(revokeResult.code).toBe(0);
+
+    const inspectRevoked = await runCliCapture(["node", "spell", "license", "inspect", "dev"]);
+    expect(inspectRevoked.code).toBe(0);
+    expect(inspectRevoked.stdout).toContain("revoked: true");
+
+    const restoreResult = await runCliCapture(["node", "spell", "license", "restore", "dev"]);
+    expect(restoreResult.code).toBe(0);
+
+    const inspectRestored = await runCliCapture(["node", "spell", "license", "inspect", "dev"]);
+    expect(inspectRestored.code).toBe(0);
+    expect(inspectRestored.stdout).toContain("revoked: false");
 
     const removeResult = await runCliCapture(["node", "spell", "license", "remove", "dev"]);
     expect(removeResult.code).toBe(0);
@@ -323,6 +355,75 @@ describe("spell cli integration", () => {
     const summary = payload.summary as Record<string, unknown>;
 
     expect(summary.license).toEqual({ licensed: true, name: "dev" });
+  });
+
+  test("revoked entitlement blocks billing and restore re-enables billing", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/billing-guard");
+    expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
+
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyDer = publicKey.export({ format: "der", type: "spki" }) as Buffer;
+    expect(
+      await runCli(["node", "spell", "trust", "add", "entitlement-lifecycle", publicKeyDer.toString("base64url"), "--key-id", "k1"])
+    ).toBe(0);
+
+    const now = Date.now();
+    const token = createSignedEntitlementToken({
+      privateKey,
+      issuer: "entitlement-lifecycle",
+      keyId: "k1",
+      mode: "on_success",
+      currency: "USD",
+      maxAmount: 30,
+      notBefore: new Date(now - 60_000).toISOString(),
+      expiresAt: new Date(now + 60 * 60 * 1000).toISOString()
+    });
+    expect(await runCli(["node", "spell", "license", "add", "lifecycle", token])).toBe(0);
+
+    const beforeRevoke = await runCliCapture([
+      "node",
+      "spell",
+      "cast",
+      "fixtures/billing-guard",
+      "--allow-unsigned",
+      "--allow-billing"
+    ]);
+    expect(beforeRevoke.code).toBe(0);
+
+    const revoke = await runCliCapture([
+      "node",
+      "spell",
+      "license",
+      "revoke",
+      "lifecycle",
+      "--reason",
+      "incident response"
+    ]);
+    expect(revoke.code).toBe(0);
+
+    const blocked = await runCliCapture([
+      "node",
+      "spell",
+      "cast",
+      "fixtures/billing-guard",
+      "--allow-unsigned",
+      "--allow-billing"
+    ]);
+    expect(blocked.code).toBe(1);
+    expect(blocked.stderr).toContain("billing enabled requires matching entitlement token");
+
+    const restore = await runCliCapture(["node", "spell", "license", "restore", "lifecycle"]);
+    expect(restore.code).toBe(0);
+
+    const afterRestore = await runCliCapture([
+      "node",
+      "spell",
+      "cast",
+      "fixtures/billing-guard",
+      "--allow-unsigned",
+      "--allow-billing"
+    ]);
+    expect(afterRestore.code).toBe(0);
   });
 
   test("risk guard blocks without --yes", async () => {

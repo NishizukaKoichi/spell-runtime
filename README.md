@@ -52,6 +52,9 @@ npm run smoke:npx
 - `spell cast <id> [--version x.y.z] [-p key=value ...] [--input input.json] [--dry-run] [--yes] [--allow-billing] [--allow-unsigned] [--require-signature] [--verbose] [--profile <name>]`
 - `spell license add <name> <entitlement-token>`
 - `spell license list`
+- `spell license inspect <name>`
+- `spell license revoke <name> [--reason <text>]`
+- `spell license restore <name>`
 - `spell license remove <name>`
 - `spell sign keygen <publisher> [--key-id default] [--out-dir .spell-keys]`
 - `spell sign bundle <local-path> --private-key <file> [--key-id default] [--publisher <name>]`
@@ -148,7 +151,7 @@ Consistency rule:
 - platform guard
 - risk guard (`high`/`critical` requires `--yes`)
 - billing guard (`billing.enabled` requires `--allow-billing`)
-- billing entitlement guard (`billing.enabled` + `--allow-billing` requires a matching valid entitlement from `spell license add ...`)
+- billing entitlement guard (`billing.enabled` + `--allow-billing` requires a matching valid, non-revoked entitlement from `spell license add ...`)
 - connector token guard (`CONNECTOR_<NAME>_TOKEN`)
 - execution summary output
 
@@ -266,6 +269,13 @@ Notes:
 ## Entitlement Tokens (Billing)
 
 `spell license add <name> <token>` now validates and stores signed entitlement tokens.
+Each successful validation writes `last_validated_at` for audit tracking.
+
+Lifecycle operations:
+
+- `spell license inspect <name>` prints `issuer`, `mode`, `currency`, `max_amount`, `window`, and `revoked`.
+- `spell license revoke <name> [--reason <text>]` sets `revoked=true` for that record.
+- `spell license restore <name>` clears revocation and allows matching again.
 
 Token format:
 
@@ -291,11 +301,12 @@ Verification rules:
 
 Billing-enabled cast requires a matching currently-valid entitlement:
 
+- entitlement record is not revoked
 - entitlement `mode === manifest.billing.mode`
 - entitlement `currency` equals `manifest.billing.currency` (case-insensitive)
 - entitlement `max_amount >= manifest.billing.max_amount`
 
-`spell license list` prints entitlement summary columns (`issuer`, `mode`, `currency`, `max_amount`, `expires_at`) and never prints raw tokens.
+`spell license list` prints entitlement summary columns (`issuer`, `mode`, `currency`, `max_amount`, `expires_at`, `revoked`) and never prints raw tokens.
 
 ## Example Flow
 

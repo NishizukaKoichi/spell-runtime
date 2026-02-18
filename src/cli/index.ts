@@ -8,7 +8,7 @@ import { readRegistryConfigIfExists, setDefaultRegistryIndex } from "../bundle/r
 import { listInstalledSpells, readSchemaFromManifest, resolveInstalledBundle, summarizeSchema } from "../bundle/store";
 import { generateSigningKeypair, signBundleFromPrivateKey } from "../signature/signing";
 import { castSpell } from "../runner/cast";
-import { listLicenses, removeLicense, upsertLicense } from "../license/store";
+import { inspectLicense, listLicenses, removeLicense, restoreLicense, revokeLicense, upsertLicense } from "../license/store";
 import { listTrustedPublishers, removeTrustedPublisher, upsertTrustedPublisherKey } from "../signature/trustStore";
 import { SpellError } from "../util/errors";
 import { logsRoot } from "../util/paths";
@@ -251,12 +251,50 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
         return;
       }
 
-      process.stdout.write("name\tissuer\tmode\tcurrency\tmax_amount\texpires_at\tupdated_at\n");
+      process.stdout.write("name\tissuer\tmode\tcurrency\tmax_amount\texpires_at\trevoked\tupdated_at\n");
       for (const entry of licenses) {
         process.stdout.write(
-          `${entry.name}\t${entry.entitlement?.issuer ?? "-"}\t${entry.entitlement?.mode ?? "-"}\t${entry.entitlement?.currency ?? "-"}\t${entry.entitlement?.max_amount ?? "-"}\t${entry.entitlement?.expires_at ?? "-"}\t${entry.updated_at ?? "-"}\n`
+          `${entry.name}\t${entry.entitlement?.issuer ?? "-"}\t${entry.entitlement?.mode ?? "-"}\t${entry.entitlement?.currency ?? "-"}\t${entry.entitlement?.max_amount ?? "-"}\t${entry.entitlement?.expires_at ?? "-"}\t${entry.revoked}\t${entry.updated_at ?? "-"}\n`
         );
       }
+    });
+
+  license
+    .command("inspect")
+    .description("Inspect a local license token")
+    .argument("<name>", "License label")
+    .action(async (name: string) => {
+      const entry = await inspectLicense(name);
+      if (!entry) {
+        throw new SpellError(`license not found: ${name}`);
+      }
+
+      process.stdout.write(`name: ${entry.name}\n`);
+      process.stdout.write(`issuer: ${entry.entitlement?.issuer ?? "-"}\n`);
+      process.stdout.write(`mode: ${entry.entitlement?.mode ?? "-"}\n`);
+      process.stdout.write(`currency: ${entry.entitlement?.currency ?? "-"}\n`);
+      process.stdout.write(`max_amount: ${entry.entitlement?.max_amount ?? "-"}\n`);
+      process.stdout.write(`window: ${entry.entitlement?.not_before ?? "-"} .. ${entry.entitlement?.expires_at ?? "-"}\n`);
+      process.stdout.write(`revoked: ${entry.revoked}\n`);
+    });
+
+  license
+    .command("revoke")
+    .description("Revoke a local license token")
+    .argument("<name>", "License label")
+    .option("--reason <text>", "Revocation reason")
+    .action(async (name: string, options: { reason?: string }) => {
+      const revoked = await revokeLicense(name, options.reason);
+      process.stdout.write(`revoked license=${revoked.name}\n`);
+    });
+
+  license
+    .command("restore")
+    .description("Restore a revoked local license token")
+    .argument("<name>", "License label")
+    .action(async (name: string) => {
+      const restored = await restoreLicense(name);
+      process.stdout.write(`restored license=${restored.name}\n`);
     });
 
   license

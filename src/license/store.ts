@@ -18,6 +18,10 @@ interface LicenseRecordV1 {
   token: string;
   created_at: string;
   updated_at: string;
+  revoked?: boolean;
+  revoked_at?: string;
+  revoke_reason?: string;
+  last_validated_at?: string;
 }
 
 interface LicenseRecordV2 {
@@ -28,6 +32,10 @@ interface LicenseRecordV2 {
   entitlement: EntitlementClaims;
   created_at: string;
   updated_at: string;
+  revoked: boolean;
+  revoked_at?: string;
+  revoke_reason?: string;
+  last_validated_at?: string;
 }
 
 interface ParsedLicenseRecord {
@@ -36,6 +44,10 @@ interface ParsedLicenseRecord {
   token: string;
   created_at?: string;
   updated_at?: string;
+  revoked: boolean;
+  revoked_at?: string;
+  revoke_reason?: string;
+  last_validated_at?: string;
   token_metadata?: EntitlementTokenMetadata;
   entitlement?: EntitlementClaims;
 }
@@ -43,6 +55,10 @@ interface ParsedLicenseRecord {
 export interface StoredLicense {
   name: string;
   hasToken: boolean;
+  revoked: boolean;
+  revoked_at?: string;
+  revoke_reason?: string;
+  last_validated_at?: string;
   created_at?: string;
   updated_at?: string;
   entitlement?: EntitlementClaims;
@@ -71,7 +87,9 @@ export async function upsertLicense(name: string, token: string): Promise<void> 
     token_metadata: verifiedToken.metadata,
     entitlement: verifiedToken.claims,
     created_at: existing?.created_at ?? now,
-    updated_at: now
+    updated_at: now,
+    revoked: false,
+    last_validated_at: now
   };
 
   const filePath = licenseFilePath(normalizedName);
@@ -112,13 +130,7 @@ export async function listLicenses(): Promise<StoredLicense[]> {
     const record = parseLicenseRecord(parsed, { strict: false, filePath });
     if (!record) continue;
 
-    licenses.push({
-      name: record.name,
-      hasToken: record.token.trim().length > 0,
-      created_at: record.created_at,
-      updated_at: record.updated_at,
-      entitlement: record.entitlement
-    });
+    licenses.push(toStoredLicense(record));
   }
 
   licenses.sort((a, b) => a.name.localeCompare(b.name));
@@ -127,7 +139,7 @@ export async function listLicenses(): Promise<StoredLicense[]> {
 
 export async function findFirstUsableLicense(): Promise<StoredLicense | null> {
   const licenses = await listLicenses();
-  return licenses.find((entry) => entry.hasToken) ?? null;
+  return licenses.find((entry) => entry.hasToken && !entry.revoked) ?? null;
 }
 
 export async function findMatchingLicenseForBilling(
@@ -138,6 +150,7 @@ export async function findMatchingLicenseForBilling(
   const targetCurrency = billing.currency.trim().toLowerCase();
 
   for (const entry of licenses) {
+    if (entry.revoked) continue;
     if (!entry.entitlement) continue;
 
     const entitlement = entry.entitlement;
@@ -150,6 +163,57 @@ export async function findMatchingLicenseForBilling(
   }
 
   return null;
+}
+
+export async function inspectLicense(name: string): Promise<StoredLicense | null> {
+  const normalizedName = normalizeName(name);
+  const record = await loadLicenseRecord(normalizedName);
+  if (!record) {
+    return null;
+  }
+  return toStoredLicense(record);
+}
+
+export async function revokeLicense(name: string, reason?: string): Promise<StoredLicense> {
+  const normalizedName = normalizeName(name);
+  const record = await loadLicenseRecord(normalizedName);
+  if (!record) {
+    throw new SpellError(`license not found: ${normalizedName}`);
+  }
+
+  const now = new Date().toISOString();
+  const payload: ParsedLicenseRecord = {
+    ...record,
+    created_at: record.created_at ?? now,
+    updated_at: now,
+    revoked: true,
+    revoked_at: now,
+    revoke_reason: normalizeOptionalReason(reason)
+  };
+
+  await writeLicenseRecord(payload);
+  return toStoredLicense(payload);
+}
+
+export async function restoreLicense(name: string): Promise<StoredLicense> {
+  const normalizedName = normalizeName(name);
+  const record = await loadLicenseRecord(normalizedName);
+  if (!record) {
+    throw new SpellError(`license not found: ${normalizedName}`);
+  }
+
+  const now = new Date().toISOString();
+  const payload: ParsedLicenseRecord = {
+    ...record,
+    created_at: record.created_at ?? now,
+    updated_at: now,
+    revoked: false,
+    revoked_at: undefined,
+    revoke_reason: undefined
+  };
+
+  await writeLicenseRecord(payload);
+  return toStoredLicense(payload);
 }
 
 async function loadLicenseRecord(name: string): Promise<ParsedLicenseRecord | null> {
@@ -189,6 +253,14 @@ function normalizeToken(token: string): string {
     throw new SpellError("license token must be non-empty");
   }
   return trimmed;
+}
+
+function normalizeOptionalReason(reason?: string): string | undefined {
+  if (typeof reason !== "string") {
+    return undefined;
+  }
+  const trimmed = reason.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 interface ParseLicenseRecordOptions {
@@ -236,11 +308,18 @@ function parseLicenseRecord(
 
   const createdAt = readOptionalString(obj, "created_at");
   const updatedAt = readOptionalString(obj, "updated_at");
+  const revoked = readOptionalBoolean(obj, "revoked");
+  const revokedAt = readOptionalString(obj, "revoked_at");
+  const revokeReason = readOptionalString(obj, "revoke_reason");
+  const lastValidatedAt = readOptionalString(obj, "last_validated_at");
   if (options.strict && !createdAt) {
     return fail("missing 'created_at' string");
   }
   if (options.strict && !updatedAt) {
     return fail("missing 'updated_at' string");
+  }
+  if (options.strict && obj.revoked !== undefined && revoked === undefined) {
+    return fail("license revoked must be a boolean");
   }
 
   if (version === "v1") {
@@ -249,7 +328,11 @@ function parseLicenseRecord(
       name,
       token,
       created_at: createdAt,
-      updated_at: updatedAt
+      updated_at: updatedAt,
+      revoked: revoked === true,
+      revoked_at: revokedAt,
+      revoke_reason: revokeReason,
+      last_validated_at: lastValidatedAt
     };
     return record;
   }
@@ -293,6 +376,10 @@ function parseLicenseRecord(
     token,
     created_at: createdAt,
     updated_at: updatedAt,
+    revoked: revoked === true,
+    revoked_at: revokedAt,
+    revoke_reason: revokeReason,
+    last_validated_at: lastValidatedAt,
     token_metadata: tokenMetadata,
     entitlement
   };
@@ -336,6 +423,73 @@ function readOptionalString(obj: Record<string, unknown>, key: string): string |
     return undefined;
   }
   return value.trim();
+}
+
+function readOptionalBoolean(obj: Record<string, unknown>, key: string): boolean | undefined {
+  const value = obj[key];
+  if (typeof value !== "boolean") {
+    return undefined;
+  }
+  return value;
+}
+
+async function writeLicenseRecord(record: ParsedLicenseRecord): Promise<void> {
+  await mkdir(licensesRoot(), { recursive: true });
+  const filePath = licenseFilePath(record.name);
+  const payload = toWritableLicenseRecord(record);
+  await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+}
+
+function toWritableLicenseRecord(record: ParsedLicenseRecord): LicenseRecordV1 | LicenseRecordV2 {
+  if (!record.created_at || !record.updated_at) {
+    throw new SpellError(`license record timestamps missing for '${record.name}'`);
+  }
+
+  if (record.version === "v1") {
+    return {
+      version: "v1",
+      name: record.name,
+      token: record.token,
+      created_at: record.created_at,
+      updated_at: record.updated_at,
+      revoked: record.revoked,
+      revoked_at: record.revoked_at,
+      revoke_reason: record.revoke_reason,
+      last_validated_at: record.last_validated_at
+    };
+  }
+
+  if (!record.token_metadata || !record.entitlement) {
+    throw new SpellError(`license record missing entitlement details for '${record.name}'`);
+  }
+
+  return {
+    version: "v2",
+    name: record.name,
+    token: record.token,
+    token_metadata: record.token_metadata,
+    entitlement: record.entitlement,
+    created_at: record.created_at,
+    updated_at: record.updated_at,
+    revoked: record.revoked,
+    revoked_at: record.revoked_at,
+    revoke_reason: record.revoke_reason,
+    last_validated_at: record.last_validated_at
+  };
+}
+
+function toStoredLicense(record: ParsedLicenseRecord): StoredLicense {
+  return {
+    name: record.name,
+    hasToken: record.token.trim().length > 0,
+    revoked: record.revoked,
+    revoked_at: record.revoked_at,
+    revoke_reason: record.revoke_reason,
+    last_validated_at: record.last_validated_at,
+    created_at: record.created_at,
+    updated_at: record.updated_at,
+    entitlement: record.entitlement
+  };
 }
 
 function entitlementsEqual(left: EntitlementClaims, right: EntitlementClaims): boolean {
