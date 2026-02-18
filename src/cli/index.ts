@@ -201,13 +201,13 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
       }
     );
 
-  const license = program.command("license").description("Manage local billing license tokens");
+  const license = program.command("license").description("Manage local entitlement tokens for billing");
 
   license
     .command("add")
-    .description("Add or update a local license token")
+    .description("Add or update a local entitlement token")
     .argument("<name>", "License label")
-    .argument("<token>", "License token")
+    .argument("<token>", "Entitlement token")
     .action(async (name: string, token: string) => {
       await upsertLicense(name, token);
       process.stdout.write(`added license=${name.trim()}\n`);
@@ -223,9 +223,11 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
         return;
       }
 
-      process.stdout.write("name\thas_token\tupdated_at\n");
+      process.stdout.write("name\tissuer\tmode\tcurrency\tmax_amount\texpires_at\tupdated_at\n");
       for (const entry of licenses) {
-        process.stdout.write(`${entry.name}\t${entry.hasToken}\t${entry.updated_at ?? "-"}\n`);
+        process.stdout.write(
+          `${entry.name}\t${entry.entitlement?.issuer ?? "-"}\t${entry.entitlement?.mode ?? "-"}\t${entry.entitlement?.currency ?? "-"}\t${entry.entitlement?.max_amount ?? "-"}\t${entry.entitlement?.expires_at ?? "-"}\t${entry.updated_at ?? "-"}\n`
+        );
       }
     });
 

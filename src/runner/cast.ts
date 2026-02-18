@@ -11,7 +11,7 @@ import { runDocker } from "./dockerRunner";
 import { renderExecutionSummary } from "./summary";
 import { enforceSignatureOrThrow, verifyBundleSignature } from "../signature/verify";
 import { publisherFromId } from "../signature/trustStore";
-import { findFirstUsableLicense } from "../license/store";
+import { findMatchingLicenseForBilling } from "../license/store";
 import { readRuntimeExecutionTimeoutMs, readRuntimeInputMaxBytes } from "./runtimeLimits";
 import { evaluateRuntimePolicy, loadRuntimePolicy } from "../policy";
 
@@ -143,9 +143,9 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
     }
 
     if (manifest.billing.enabled) {
-      const matchedLicense = await findFirstUsableLicense();
+      const matchedLicense = await findMatchingLicenseForBilling(manifest.billing);
       if (!matchedLicense) {
-        throw new SpellError("billing enabled requires license token (spell license add ...)");
+        throw new SpellError("billing enabled requires matching entitlement token");
       }
       log.summary.license = {
         licensed: true,

@@ -34,7 +34,7 @@ Manual npx (local package):
 - spell list
 - spell inspect <id> [--version x.y.z]
 - spell cast <id> [--version x.y.z] [-p key=value ...] [--input input.json] [--dry-run] [--yes] [--allow-billing] [--allow-unsigned] [--require-signature] [--verbose] [--profile <name>]
-- spell license add <name> <token>
+- spell license add <name> <entitlement-token>
 - spell license list
 - spell license remove <name>
 - spell sign keygen <publisher> [--key-id default] [--out-dir .spell-keys]
@@ -63,7 +63,7 @@ Limitations:
 - Spells: ~/.spell/spells/<id_key>/<version>/
 - ID index: ~/.spell/spells/<id_key>/spell.id.txt
 - Logs: ~/.spell/logs/<timestamp>_<id>_<version>.json
-- Billing license tokens: ~/.spell/licenses/*.json
+- Billing entitlement records: ~/.spell/licenses/*.json
 
 id_key is fixed as base64url(utf8(id)).
 - id is the logical identifier (display, package identity).
@@ -83,7 +83,7 @@ Cast performs these checks before execution:
 - Platform guard
 - Risk guard (high/critical requires --yes)
 - Billing guard (billing.enabled requires --allow-billing)
-- Billing license guard (billing.enabled + --allow-billing requires a local token from spell license add ...)
+- Billing entitlement guard (billing.enabled + --allow-billing requires a matching valid entitlement from spell license add ...)
 - Connector token guard (CONNECTOR_<NAME>_TOKEN)
 - Execution summary output
 
@@ -136,7 +136,7 @@ Use these effect.type words where possible:
 
 8. v1 limitations (intentionally not implemented)
 - name search or ambiguous resolution (id only)
-- registry/marketplace/license verification
+- registry/marketplace integration
 - real billing execution (Stripe)
 - DAG/parallel/rollback/self-healing
 - advanced templating language (only {{INPUT.*}} and {{ENV.*}})
@@ -161,6 +161,35 @@ Trust store:
 Notes:
 - publisher is derived from the spell id prefix before the first / (example: samples/call-webhook -> samples).
 - public key format is ed25519 spki DER encoded as base64url.
+
+8.2 Entitlement tokens (billing)
+spell license add <name> <token> now validates and stores signed entitlement tokens.
+
+Token format:
+- ent1.<payloadBase64url>.<signatureBase64url>
+
+Payload JSON required fields:
+- version ("v1")
+- issuer (string)
+- key_id (string)
+- mode ("upfront" | "on_success" | "subscription")
+- currency (string)
+- max_amount (number)
+- not_before (ISO string)
+- expires_at (ISO string)
+
+Verification rules:
+- signature algorithm: ed25519
+- signed message: raw payload segment bytes (exact payload base64url segment string bytes)
+- trust source: publisher trust store (spell trust add ...) keyed by issuer + key_id
+- token must be within not_before <= now <= expires_at
+
+Billing-enabled cast requires a matching currently-valid entitlement:
+- entitlement mode equals manifest.billing.mode
+- entitlement currency equals manifest.billing.currency (case-insensitive)
+- entitlement max_amount >= manifest.billing.max_amount
+
+spell license list prints entitlement summary columns (issuer/mode/currency/max_amount/expires_at) and does not print raw tokens.
 
 9. Example flow
 1) Install a local fixture

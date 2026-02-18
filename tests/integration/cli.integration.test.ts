@@ -121,14 +121,30 @@ describe("spell cli integration", () => {
   });
 
   test("license commands add/list/remove local tokens", async () => {
-    const addResult = await runCliCapture(["node", "spell", "license", "add", "dev", "token-123"]);
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyDer = publicKey.export({ format: "der", type: "spki" }) as Buffer;
+    expect(await runCli(["node", "spell", "trust", "add", "entitlement-dev", publicKeyDer.toString("base64url"), "--key-id", "k1"])).toBe(0);
+
+    const now = Date.now();
+    const token = createSignedEntitlementToken({
+      privateKey,
+      issuer: "entitlement-dev",
+      keyId: "k1",
+      mode: "on_success",
+      currency: "USD",
+      maxAmount: 25,
+      notBefore: new Date(now - 60_000).toISOString(),
+      expiresAt: new Date(now + 60 * 60 * 1000).toISOString()
+    });
+
+    const addResult = await runCliCapture(["node", "spell", "license", "add", "dev", token]);
     expect(addResult.code).toBe(0);
 
     const listResult = await runCliCapture(["node", "spell", "license", "list"]);
     expect(listResult.code).toBe(0);
-    expect(listResult.stdout).toContain("name\thas_token\tupdated_at");
-    expect(listResult.stdout).toContain("dev\ttrue\t");
-    expect(listResult.stdout).not.toContain("token-123");
+    expect(listResult.stdout).toContain("name\tissuer\tmode\tcurrency\tmax_amount\texpires_at\tupdated_at");
+    expect(listResult.stdout).toContain("dev\tentitlement-dev\ton_success\tUSD\t25\t");
+    expect(listResult.stdout).not.toContain(token);
 
     const removeResult = await runCliCapture(["node", "spell", "license", "remove", "dev"]);
     expect(removeResult.code).toBe(0);
@@ -147,9 +163,26 @@ describe("spell cli integration", () => {
     expect(result.stderr).toContain("billing enabled requires --allow-billing");
   });
 
-  test("billing guard blocks without license token after --allow-billing", async () => {
+  test("billing guard blocks without matching entitlement after --allow-billing", async () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/billing-guard");
     expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
+
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyDer = publicKey.export({ format: "der", type: "spki" }) as Buffer;
+    expect(await runCli(["node", "spell", "trust", "add", "entitlement-mismatch", publicKeyDer.toString("base64url"), "--key-id", "k1"])).toBe(0);
+
+    const now = Date.now();
+    const nonMatchingToken = createSignedEntitlementToken({
+      privateKey,
+      issuer: "entitlement-mismatch",
+      keyId: "k1",
+      mode: "upfront",
+      currency: "USD",
+      maxAmount: 10,
+      notBefore: new Date(now - 60_000).toISOString(),
+      expiresAt: new Date(now + 60 * 60 * 1000).toISOString()
+    });
+    expect(await runCli(["node", "spell", "license", "add", "dev-mismatch", nonMatchingToken])).toBe(0);
 
     const result = await runCliCapture([
       "node",
@@ -160,13 +193,29 @@ describe("spell cli integration", () => {
       "--allow-billing"
     ]);
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain("billing enabled requires license token (spell license add ...)");
+    expect(result.stderr).toContain("billing enabled requires matching entitlement token");
   });
 
-  test("billing guard passes with --allow-billing when a license token exists", async () => {
+  test("billing guard passes with --allow-billing when a matching entitlement exists", async () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/billing-guard");
     expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
-    expect(await runCli(["node", "spell", "license", "add", "dev", "token-123"])).toBe(0);
+
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyDer = publicKey.export({ format: "der", type: "spki" }) as Buffer;
+    expect(await runCli(["node", "spell", "trust", "add", "entitlement-ok", publicKeyDer.toString("base64url"), "--key-id", "k1"])).toBe(0);
+
+    const now = Date.now();
+    const token = createSignedEntitlementToken({
+      privateKey,
+      issuer: "entitlement-ok",
+      keyId: "k1",
+      mode: "on_success",
+      currency: "usd",
+      maxAmount: 15,
+      notBefore: new Date(now - 60_000).toISOString(),
+      expiresAt: new Date(now + 60 * 60 * 1000).toISOString()
+    });
+    expect(await runCli(["node", "spell", "license", "add", "dev", token])).toBe(0);
 
     const result = await runCliCapture([
       "node",
@@ -992,4 +1041,30 @@ async function createHostShellBundle(
 
   await writeFile(path.join(bundleDir, "spell.yaml"), manifestLines.join("\n"), "utf8");
   return bundleDir;
+}
+
+function createSignedEntitlementToken(options: {
+  privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"];
+  issuer: string;
+  keyId: string;
+  mode: "upfront" | "on_success" | "subscription";
+  currency: string;
+  maxAmount: number;
+  notBefore: string;
+  expiresAt: string;
+}): string {
+  const payload = {
+    version: "v1",
+    issuer: options.issuer,
+    key_id: options.keyId,
+    mode: options.mode,
+    currency: options.currency,
+    max_amount: options.maxAmount,
+    not_before: options.notBefore,
+    expires_at: options.expiresAt
+  } as const;
+
+  const payloadBase64Url = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signatureBase64Url = sign(null, Buffer.from(payloadBase64Url, "utf8"), options.privateKey).toString("base64url");
+  return `ent1.${payloadBase64Url}.${signatureBase64Url}`;
 }
