@@ -6,6 +6,21 @@ import { SpellBundleManifest, CheckResult, StepResult } from "../types";
 import { SpellError } from "../util/errors";
 import { formatExecutionTimeoutMessage } from "./runtimeLimits";
 
+type DockerNetworkMode = "none" | "bridge" | "host";
+
+interface DockerRunConfig {
+  network: DockerNetworkMode;
+  user?: string;
+  readOnly: boolean;
+  pidsLimit?: number;
+  memory?: string;
+  cpus?: string;
+}
+
+const DEFAULT_DOCKER_NETWORK: DockerNetworkMode = "none";
+const DEFAULT_DOCKER_USER = "65532:65532";
+const DEFAULT_DOCKER_PIDS_LIMIT = 256;
+
 export interface DockerRunnerResult {
   success: boolean;
   error?: string;
@@ -58,14 +73,29 @@ export async function runDocker(
   }
 }
 
-function buildDockerArgs(dockerImage: string, bundlePath: string, tempDir: string, manifest: SpellBundleManifest): string[] {
+export function buildDockerArgs(
+  dockerImage: string,
+  bundlePath: string,
+  tempDir: string,
+  manifest: SpellBundleManifest,
+  env: NodeJS.ProcessEnv = process.env
+): string[] {
   const inputInContainer = "/tmp/spell-input/input.json";
-  const envVars = collectEnvVarsToPass(manifest);
+  const envVars = collectEnvVarsToPass(manifest, env);
+  const dockerRunConfig = readDockerRunConfig(env);
 
   const args: string[] = [
     "run",
     "--rm",
     "-i",
+    "--network",
+    dockerRunConfig.network,
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--tmpfs",
+    "/tmp:rw,noexec,nosuid,size=64m",
     "--workdir",
     "/spell",
     "-v",
@@ -76,6 +106,26 @@ function buildDockerArgs(dockerImage: string, bundlePath: string, tempDir: strin
     `INPUT_JSON=${inputInContainer}`
   ];
 
+  if (dockerRunConfig.readOnly) {
+    args.push("--read-only");
+  }
+
+  if (dockerRunConfig.user !== undefined) {
+    args.push("--user", dockerRunConfig.user);
+  }
+
+  if (dockerRunConfig.pidsLimit !== undefined) {
+    args.push("--pids-limit", String(dockerRunConfig.pidsLimit));
+  }
+
+  if (dockerRunConfig.memory !== undefined) {
+    args.push("--memory", dockerRunConfig.memory);
+  }
+
+  if (dockerRunConfig.cpus !== undefined) {
+    args.push("--cpus", dockerRunConfig.cpus);
+  }
+
   for (const [key, value] of envVars) {
     args.push("-e", `${key}=${value}`);
   }
@@ -84,24 +134,127 @@ function buildDockerArgs(dockerImage: string, bundlePath: string, tempDir: strin
   return args;
 }
 
-function collectEnvVarsToPass(manifest: SpellBundleManifest): Array<[string, string]> {
+function collectEnvVarsToPass(manifest: SpellBundleManifest, env: NodeJS.ProcessEnv = process.env): Array<[string, string]> {
   const out: Array<[string, string]> = [];
 
   // pass connector tokens (and fail earlier if missing)
   for (const permission of manifest.permissions) {
     const tokenKey = `CONNECTOR_${permission.connector.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_TOKEN`;
-    const value = process.env[tokenKey];
+    const value = env[tokenKey];
     if (typeof value === "string" && value.trim() !== "") {
       out.push([tokenKey, value]);
     }
   }
 
-  const stepTimeout = process.env.SPELL_RUNTIME_STEP_TIMEOUT_MS;
+  const stepTimeout = env.SPELL_RUNTIME_STEP_TIMEOUT_MS;
   if (typeof stepTimeout === "string" && stepTimeout.trim() !== "") {
     out.push(["SPELL_RUNTIME_STEP_TIMEOUT_MS", stepTimeout.trim()]);
   }
 
   return out;
+}
+
+function readDockerRunConfig(env: NodeJS.ProcessEnv): DockerRunConfig {
+  return {
+    network: readDockerNetwork(env),
+    user: readDockerUser(env),
+    readOnly: readDockerReadOnly(env),
+    pidsLimit: readDockerPidsLimit(env),
+    memory: readDockerMemory(env),
+    cpus: readDockerCpus(env)
+  };
+}
+
+function readDockerNetwork(env: NodeJS.ProcessEnv): DockerNetworkMode {
+  const raw = env.SPELL_DOCKER_NETWORK;
+  const value = raw === undefined || raw.trim() === "" ? DEFAULT_DOCKER_NETWORK : raw.trim();
+  if (value === "none" || value === "bridge" || value === "host") {
+    return value;
+  }
+
+  throw new SpellError("SPELL_DOCKER_NETWORK must be one of: none, bridge, host");
+}
+
+function readDockerUser(env: NodeJS.ProcessEnv): string | undefined {
+  const raw = env.SPELL_DOCKER_USER;
+  if (raw === undefined) {
+    return DEFAULT_DOCKER_USER;
+  }
+
+  const value = raw.trim();
+  if (value === "") {
+    return undefined;
+  }
+
+  if (/\s/.test(value)) {
+    throw new SpellError("SPELL_DOCKER_USER must not contain whitespace");
+  }
+
+  return value;
+}
+
+function readDockerReadOnly(env: NodeJS.ProcessEnv): boolean {
+  const raw = env.SPELL_DOCKER_READ_ONLY;
+  if (raw === undefined || raw.trim() === "") {
+    return true;
+  }
+
+  const value = raw.trim();
+  if (value === "1") {
+    return true;
+  }
+  if (value === "0") {
+    return false;
+  }
+
+  throw new SpellError("SPELL_DOCKER_READ_ONLY must be '1' or '0'");
+}
+
+function readDockerPidsLimit(env: NodeJS.ProcessEnv): number | undefined {
+  const raw = env.SPELL_DOCKER_PIDS_LIMIT;
+  if (raw === undefined || raw.trim() === "") {
+    return DEFAULT_DOCKER_PIDS_LIMIT;
+  }
+
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new SpellError("SPELL_DOCKER_PIDS_LIMIT must be an integer >= 0");
+  }
+
+  if (value === 0) {
+    return undefined;
+  }
+
+  return value;
+}
+
+function readDockerMemory(env: NodeJS.ProcessEnv): string | undefined {
+  const raw = env.SPELL_DOCKER_MEMORY;
+  if (raw === undefined || raw.trim() === "") {
+    return undefined;
+  }
+
+  const value = raw.trim();
+  if (!/^\d+[bkmg]?$/i.test(value)) {
+    throw new SpellError("SPELL_DOCKER_MEMORY must be a positive integer optionally suffixed with b, k, m, or g");
+  }
+
+  return value;
+}
+
+function readDockerCpus(env: NodeJS.ProcessEnv): string | undefined {
+  const raw = env.SPELL_DOCKER_CPUS;
+  if (raw === undefined || raw.trim() === "") {
+    return undefined;
+  }
+
+  const value = raw.trim();
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new SpellError("SPELL_DOCKER_CPUS must be a number > 0");
+  }
+
+  return value;
 }
 
 function parseRunnerJson(stdout: string): DockerRunnerResult {
