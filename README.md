@@ -100,6 +100,7 @@ Consistency rule:
 - input assembly (`--input` + `-p` overrides)
 - JSON Schema validation by Ajv
 - signature verification (default on; bypass only with `--allow-unsigned`)
+- runtime policy guard (`~/.spell/policy.json`)
 - platform guard
 - risk guard (`high`/`critical` requires `--yes`)
 - billing guard (`billing.enabled` requires `--allow-billing`)
@@ -108,6 +109,23 @@ Consistency rule:
 - execution summary output
 
 If `--dry-run` is set, command exits after summary and validation.
+
+Policy file format (`~/.spell/policy.json`):
+
+```json
+{
+  "version": "v1",
+  "default": "allow",
+  "publishers": { "allow": ["samples"], "deny": ["blocked"] },
+  "max_risk": "high",
+  "runtime": { "allow_execution": ["host", "docker"] }
+}
+```
+
+Notes:
+- missing policy file => allow by default
+- invalid policy file => `invalid policy: ...`
+- policy rejection => `policy denied: <reason>`
 
 ## Runtime Safety Limits (v2 isolation)
 

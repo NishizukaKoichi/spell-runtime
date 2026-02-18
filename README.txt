@@ -79,6 +79,7 @@ Cast performs these checks before execution:
 - Input assembly (--input + -p overrides)
 - JSON Schema validation by Ajv
 - Signature verification (default on; bypass only with --allow-unsigned)
+- Runtime policy guard (~/.spell/policy.json)
 - Platform guard
 - Risk guard (high/critical requires --yes)
 - Billing guard (billing.enabled requires --allow-billing)
@@ -87,6 +88,20 @@ Cast performs these checks before execution:
 - Execution summary output
 
 If --dry-run is set, command exits after summary and validation.
+
+Policy file format (~/.spell/policy.json):
+{
+  "version": "v1",
+  "default": "allow",
+  "publishers": { "allow": ["samples"], "deny": ["blocked"] },
+  "max_risk": "high",
+  "runtime": { "allow_execution": ["host", "docker"] }
+}
+
+Notes:
+- missing policy file => allow by default
+- invalid policy file => invalid policy: ...
+- policy rejection => policy denied: <reason>
 
 4.1 Runtime safety limits (v2 isolation)
 cast enforces these runtime limits (for direct CLI casts and API-triggered casts, because the API invokes spell cast):

@@ -13,6 +13,7 @@ import { enforceSignatureOrThrow, verifyBundleSignature } from "../signature/ver
 import { publisherFromId } from "../signature/trustStore";
 import { findFirstUsableLicense } from "../license/store";
 import { readRuntimeExecutionTimeoutMs, readRuntimeInputMaxBytes } from "./runtimeLimits";
+import { evaluateRuntimePolicy, loadRuntimePolicy } from "../policy";
 
 export interface CastResult {
   executionId: string;
@@ -74,6 +75,16 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
         licensed: false
       }
     };
+
+    const runtimePolicy = await loadRuntimePolicy();
+    const policyDecision = evaluateRuntimePolicy(runtimePolicy, {
+      publisher: publisherFromId(manifest.id),
+      risk: manifest.risk,
+      execution: manifest.runtime.execution
+    });
+    if (!policyDecision.allow) {
+      throw new SpellError(`policy denied: ${policyDecision.reason}`);
+    }
 
     log.signature = {
       required: options.requireSignature,

@@ -196,6 +196,23 @@ describe("spell cli integration", () => {
     expect(result.stderr).toContain("risk high requires --yes");
   });
 
+  test("policy file default deny blocks cast", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
+
+    const spellDir = path.join(tempHome, ".spell");
+    await mkdir(spellDir, { recursive: true });
+    await writeFile(
+      path.join(spellDir, "policy.json"),
+      `${JSON.stringify({ version: "v1", default: "deny" }, null, 2)}\n`,
+      "utf8"
+    );
+
+    const result = await runCliCapture(["node", "spell", "cast", "fixtures/hello-host", "-p", "name=world"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("policy denied: default policy is deny");
+  });
+
   test("permissions guard blocks without connector token", async () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/permissions-guard");
     expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
