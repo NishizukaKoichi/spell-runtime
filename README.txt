@@ -229,14 +229,14 @@ Defaults:
   GET /
   GET /ui/app.js
   GET /api/buttons
-  GET /api/spell-executions (status/button_id/limit query supported)
+  GET /api/spell-executions (status/button_id/tenant_id/limit query supported)
   POST /api/spell-executions
   GET /api/spell-executions/:execution_id
 
 Optional environment variables:
 - SPELL_API_PORT
 - SPELL_BUTTON_REGISTRY_PATH
-- SPELL_API_AUTH_KEYS (comma-separated role=token entries; when set, /api/* requires auth and derives actor_role from token)
+- SPELL_API_AUTH_KEYS (comma-separated role=token or tenant:role=token entries; when set, /api/* requires auth and derives actor_role + tenant_id from token)
 - SPELL_API_AUTH_TOKENS (legacy: comma-separated tokens; when set, /api/* requires auth but does not bind role)
 - SPELL_API_BODY_LIMIT_BYTES
 - SPELL_API_EXECUTION_TIMEOUT_MS
@@ -250,4 +250,5 @@ Security note:
 - execution logs redact secret-like keys (token, authorization, apiKey, etc.)
 - environment-derived secret values are masked in persisted logs
 - when auth is enabled, pass Authorization: Bearer <token> (or x-api-key) for /api routes
+- with SPELL_API_AUTH_KEYS, non-admin list requests are restricted to their own tenant and cross-tenant tenant_id filters return 403 (TENANT_FORBIDDEN)
 - do not set both SPELL_API_AUTH_KEYS and SPELL_API_AUTH_TOKENS at the same time

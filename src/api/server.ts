@@ -25,9 +25,12 @@ export interface ExecutionApiServerOptions {
 type JobStatus = "queued" | "running" | "succeeded" | "failed" | "timeout";
 
 interface ApiAuthKey {
+  tenantId: string;
   role: string;
   token: string;
 }
+
+type ApiAuthContext = { ok: true; tenantId: string; role?: string } | { ok: false; errorCode: string; message: string };
 
 interface ExecutionJob {
   execution_id: string;
@@ -36,6 +39,7 @@ interface ExecutionJob {
   version: string;
   require_signature: boolean;
   status: JobStatus;
+  tenant_id: string;
   actor_role: string;
   created_at: string;
   started_at?: string;
@@ -66,6 +70,7 @@ interface StartExecutionApiServerResult {
 interface ListExecutionsQuery {
   statuses: Set<JobStatus> | null;
   buttonId: string | null;
+  tenantId: string | null;
   limit: number;
 }
 
@@ -84,6 +89,8 @@ const DEFAULT_LIST_LIMIT = 100;
 const MAX_LIST_LIMIT = 500;
 const DEFAULT_LOG_RETENTION_DAYS = 14;
 const DEFAULT_LOG_MAX_FILES = 500;
+const DEFAULT_TENANT_ID = "default";
+const AUTH_KEY_SEGMENT_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 
 export async function startExecutionApiServer(
   options: ExecutionApiServerOptions = {}
@@ -150,8 +157,9 @@ export async function startExecutionApiServer(
         return sendJson(res, 200, { ok: true });
       }
 
-      const authContext =
-        requiresApiAuth(route) ? authorizeRequest(req, authTokens, authKeys) : ({ ok: true } as const);
+      const authContext: ApiAuthContext = requiresApiAuth(route)
+        ? authorizeRequest(req, authTokens, authKeys)
+        : ({ ok: true, tenantId: DEFAULT_TENANT_ID } as const);
 
       if (requiresApiAuth(route)) {
         if (!authContext.ok) {
@@ -215,6 +223,7 @@ export async function startExecutionApiServer(
           parsed.actor_role ??
           req.headers["x-role"]?.toString() ??
           "anonymous";
+        const tenantId = authContext.ok ? authContext.tenantId : DEFAULT_TENANT_ID;
         if (!entry.allowed_roles.includes(actorRole)) {
           return sendJson(res, 403, {
             ok: false,
@@ -259,6 +268,7 @@ export async function startExecutionApiServer(
           version: entry.version,
           require_signature: entry.require_signature ?? false,
           status: "queued",
+          tenant_id: tenantId,
           actor_role: actorRole,
           created_at: now
         };
@@ -290,6 +300,7 @@ export async function startExecutionApiServer(
         return sendJson(res, 202, {
           ok: true,
           execution_id: executionId,
+          tenant_id: job.tenant_id,
           status: job.status
         });
       }
@@ -324,18 +335,29 @@ export async function startExecutionApiServer(
           });
         }
 
+        const scoped = scopeListExecutionsQuery(query, authContext, authKeys.length > 0);
+        if (!scoped.ok) {
+          return sendJson(res, 403, {
+            ok: false,
+            error_code: scoped.errorCode,
+            message: scoped.message
+          });
+        }
+
+        const effectiveQuery = scoped.query;
         const executions = Array.from(jobs.values())
-          .filter((job) => matchJobByQuery(job, query))
+          .filter((job) => matchJobByQuery(job, effectiveQuery))
           .sort((a, b) => b.created_at.localeCompare(a.created_at))
-          .slice(0, query.limit)
+          .slice(0, effectiveQuery.limit)
           .map((job) => summarizeJob(job));
 
         return sendJson(res, 200, {
           ok: true,
           filters: {
-            status: query.statuses ? Array.from(query.statuses) : [],
-            button_id: query.buttonId ?? null,
-            limit: query.limit
+            status: effectiveQuery.statuses ? Array.from(effectiveQuery.statuses) : [],
+            button_id: effectiveQuery.buttonId ?? null,
+            tenant_id: effectiveQuery.tenantId ?? null,
+            limit: effectiveQuery.limit
           },
           executions
         });
@@ -464,6 +486,12 @@ async function runJob(
   let receipt: Record<string, unknown> | undefined;
   if (runtimeLogPath) {
     receipt = await loadSanitizedReceipt(runtimeLogPath).catch(() => undefined);
+    if (receipt) {
+      receipt = {
+        ...receipt,
+        tenant_id: job.tenant_id
+      };
+    }
   }
 
   const finishedBase: ExecutionJob = {
@@ -521,6 +549,7 @@ function summarizeJob(job: ExecutionJob): Record<string, unknown> {
     version: job.version,
     require_signature: job.require_signature,
     status: job.status,
+    tenant_id: job.tenant_id,
     actor_role: job.actor_role,
     created_at: job.created_at,
     started_at: job.started_at,
@@ -615,7 +644,7 @@ function parseCreateExecutionRequest(payload: unknown): CreateExecutionRequest {
   }
 
   const obj = payload as Record<string, unknown>;
-  const allowedKeys = new Set(["button_id", "dry_run", "input", "confirmation", "actor_role"]);
+  const allowedKeys = new Set(["button_id", "dry_run", "input", "confirmation", "actor_role", "tenant", "tenant_id"]);
   for (const key of Object.keys(obj)) {
     if (!allowedKeys.has(key)) {
       throw new Error(`unsupported field in request body: ${key}`);
@@ -732,6 +761,7 @@ function countInFlightJobs(jobs: Map<string, ExecutionJob>): number {
 function parseListExecutionsQuery(params: URLSearchParams): ListExecutionsQuery {
   const statusParam = params.get("status");
   const buttonIdParam = params.get("button_id");
+  const tenantIdParam = params.get("tenant_id");
   const limitParam = params.get("limit");
 
   let statuses: Set<JobStatus> | null = null;
@@ -760,10 +790,15 @@ function parseListExecutionsQuery(params: URLSearchParams): ListExecutionsQuery 
   }
 
   const buttonId = buttonIdParam && buttonIdParam.trim() !== "" ? buttonIdParam.trim() : null;
+  const tenantId = tenantIdParam && tenantIdParam.trim() !== "" ? tenantIdParam.trim() : null;
+  if (tenantId && !AUTH_KEY_SEGMENT_PATTERN.test(tenantId)) {
+    throw new Error(`invalid tenant_id filter: ${tenantId}`);
+  }
 
   return {
     statuses,
     buttonId,
+    tenantId,
     limit
   };
 }
@@ -773,6 +808,9 @@ function matchJobByQuery(job: ExecutionJob, query: ListExecutionsQuery): boolean
     return false;
   }
   if (query.buttonId && job.button_id !== query.buttonId) {
+    return false;
+  }
+  if (query.tenantId && job.tenant_id !== query.tenantId) {
     return false;
   }
   return true;
@@ -790,9 +828,9 @@ function authorizeRequest(
   req: IncomingMessage,
   authTokens: Set<string>,
   authKeys: ApiAuthKey[]
-): { ok: true; role?: string } | { ok: false; errorCode: string; message: string } {
+): ApiAuthContext {
   if (authTokens.size === 0 && authKeys.length === 0) {
-    return { ok: true };
+    return { ok: true, tenantId: DEFAULT_TENANT_ID };
   }
 
   const token = readAuthToken(req);
@@ -803,7 +841,7 @@ function authorizeRequest(
   if (authKeys.length > 0) {
     for (const key of authKeys) {
       if (secureTokenEquals(key.token, token)) {
-        return { ok: true, role: key.role };
+        return { ok: true, tenantId: key.tenantId, role: key.role };
       }
     }
 
@@ -812,7 +850,7 @@ function authorizeRequest(
 
   for (const expectedToken of authTokens) {
     if (secureTokenEquals(expectedToken, token)) {
-      return { ok: true };
+      return { ok: true, tenantId: DEFAULT_TENANT_ID };
     }
   }
 
@@ -829,28 +867,51 @@ function parseAuthKeys(entries: string[]): ApiAuthKey[] {
       continue;
     }
 
-    const delimiter = trimmed.includes("=") ? "=" : ":";
-    const idx = trimmed.indexOf(delimiter);
-    if (idx <= 0 || idx >= trimmed.length - 1) {
+    let left = "";
+    let token = "";
+    if (trimmed.includes("=")) {
+      const idx = trimmed.indexOf("=");
+      if (idx <= 0 || idx >= trimmed.length - 1) {
+        throw new Error(`invalid auth key entry: ${trimmed}`);
+      }
+      left = trimmed.slice(0, idx).trim();
+      token = trimmed.slice(idx + 1).trim();
+    } else {
+      const legacyIdx = trimmed.indexOf(":");
+      if (legacyIdx <= 0 || legacyIdx >= trimmed.length - 1) {
+        throw new Error(`invalid auth key entry: ${trimmed}`);
+      }
+      left = trimmed.slice(0, legacyIdx).trim();
+      token = trimmed.slice(legacyIdx + 1).trim();
+    }
+
+    const leftSegments = left.split(":");
+    let tenantId = DEFAULT_TENANT_ID;
+    let role = "";
+    if (leftSegments.length === 1) {
+      [role] = leftSegments;
+    } else if (leftSegments.length === 2) {
+      [tenantId, role] = leftSegments;
+    } else {
       throw new Error(`invalid auth key entry: ${trimmed}`);
     }
 
-    const role = trimmed.slice(0, idx).trim();
-    const token = trimmed.slice(idx + 1).trim();
-
-    if (!role || !/^[a-zA-Z0-9_-]{1,64}$/.test(role)) {
+    if (!tenantId || !AUTH_KEY_SEGMENT_PATTERN.test(tenantId)) {
+      throw new Error(`invalid auth key tenant: ${tenantId || "(empty)"}`);
+    }
+    if (!role || !AUTH_KEY_SEGMENT_PATTERN.test(role)) {
       throw new Error(`invalid auth key role: ${role || "(empty)"}`);
     }
     if (!token) {
-      throw new Error(`invalid auth key token: ${role} has empty token`);
+      throw new Error(`invalid auth key token: ${tenantId}:${role} has empty token`);
     }
 
     if (seenTokens.has(token)) {
-      throw new Error(`duplicate auth key token configured for role: ${role}`);
+      throw new Error(`duplicate auth key token configured for role: ${tenantId}:${role}`);
     }
     seenTokens.add(token);
 
-    out.push({ role, token });
+    out.push({ tenantId, role, token });
   }
 
   return out;
@@ -936,6 +997,7 @@ async function loadExecutionJobsIndex(filePath: string): Promise<Map<string, Exe
     }
     jobs.set(item.execution_id, {
       ...item,
+      tenant_id: normalizeTenantId((item as Partial<ExecutionJob>).tenant_id),
       require_signature: Boolean((item as Partial<ExecutionJob>).require_signature)
     });
   }
@@ -1113,11 +1175,49 @@ function isExecutionJob(value: unknown): value is ExecutionJob {
     typeof obj.spell_id === "string" &&
     typeof obj.version === "string" &&
     (obj.require_signature === undefined || typeof obj.require_signature === "boolean") &&
+    (obj.tenant_id === undefined || typeof obj.tenant_id === "string") &&
     typeof obj.actor_role === "string" &&
     typeof obj.created_at === "string" &&
     typeof obj.status === "string" &&
     isJobStatus(obj.status)
   );
+}
+
+function scopeListExecutionsQuery(
+  query: ListExecutionsQuery,
+  authContext: ApiAuthContext,
+  authKeysEnabled: boolean
+): { ok: true; query: ListExecutionsQuery } | { ok: false; errorCode: string; message: string } {
+  if (!authKeysEnabled || !authContext.ok || authContext.role === "admin") {
+    return { ok: true, query };
+  }
+
+  if (query.tenantId && query.tenantId !== authContext.tenantId) {
+    return {
+      ok: false,
+      errorCode: "TENANT_FORBIDDEN",
+      message: `tenant query denied: ${query.tenantId}`
+    };
+  }
+
+  return {
+    ok: true,
+    query: {
+      ...query,
+      tenantId: authContext.tenantId
+    }
+  };
+}
+
+function normalizeTenantId(value: unknown): string {
+  if (typeof value !== "string") {
+    return DEFAULT_TENANT_ID;
+  }
+  const tenantId = value.trim();
+  if (!tenantId) {
+    return DEFAULT_TENANT_ID;
+  }
+  return tenantId;
 }
 
 function deepMerge(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {

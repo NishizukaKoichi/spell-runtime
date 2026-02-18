@@ -59,6 +59,7 @@ describe("execution api integration", () => {
       const done = await waitForExecution(server.port, executionId);
       expect(done.execution.status).toBe("succeeded");
       expect(done.receipt).toBeTruthy();
+      expect((done.receipt as Record<string, unknown>).tenant_id).toBe("default");
       expect(JSON.stringify(done.receipt)).not.toContain("stdout_head");
       expect(JSON.stringify(done.receipt)).not.toContain("stderr_head");
     } finally {
@@ -130,7 +131,7 @@ describe("execution api integration", () => {
     }
   });
 
-  test("GET /api/spell-executions supports status/button_id/limit filters", async () => {
+  test("GET /api/spell-executions supports status/button_id/tenant_id/limit filters", async () => {
     const server = await startExecutionApiServer({
       port: 0,
       registryPath: path.join(process.cwd(), "examples/button-registry.v1.json")
@@ -151,7 +152,7 @@ describe("execution api integration", () => {
       await waitForExecution(server.port, failedExecutionId);
 
       const successOnly = await fetch(
-        `http://127.0.0.1:${server.port}/api/spell-executions?status=succeeded&button_id=publish_site_high_risk&limit=1`
+        `http://127.0.0.1:${server.port}/api/spell-executions?status=succeeded&button_id=publish_site_high_risk&tenant_id=default&limit=1`
       );
       expect(successOnly.status).toBe(200);
       const successPayload = (await successOnly.json()) as {
@@ -168,6 +169,13 @@ describe("execution api integration", () => {
       };
       expect(failedPayload.executions.some((execution) => execution.execution_id === failedExecutionId)).toBe(true);
       expect(failedPayload.executions.every((execution) => execution.status === "failed")).toBe(true);
+
+      const none = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions?tenant_id=team_b`);
+      expect(none.status).toBe(200);
+      const nonePayload = (await none.json()) as {
+        executions: Array<{ execution_id: string; tenant_id: string }>;
+      };
+      expect(nonePayload.executions).toHaveLength(0);
 
       const invalid = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions?status=unknown`);
       expect(invalid.status).toBe(400);
@@ -287,9 +295,89 @@ describe("execution api integration", () => {
       expect(created.status).toBe(202);
       const createdPayload = (await created.json()) as Record<string, unknown>;
       const executionId = String(createdPayload.execution_id);
+      expect(createdPayload.tenant_id).toBe("default");
 
       const done = await waitForExecution(server.port, executionId, "op-token");
       expect(done.execution.actor_role).toBe("operator");
+      expect(done.execution.tenant_id).toBe("default");
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("enforces tenant scoping for auth keys and ignores client tenant fields", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json"),
+      authKeys: ["team_a:operator=team-a-op-token", "team_b:operator=team-b-op-token", "team_a:admin=team-a-admin-token"]
+    });
+
+    try {
+      const createdA = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-a-op-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "call_webhook_demo",
+          actor_role: "admin",
+          dry_run: true,
+          tenant: "team_b",
+          tenant_id: "team_b"
+        })
+      });
+      expect(createdA.status).toBe(202);
+      const createdAPayload = (await createdA.json()) as Record<string, unknown>;
+      expect(createdAPayload.tenant_id).toBe("team_a");
+      const executionA = String(createdAPayload.execution_id);
+      const doneA = await waitForExecution(server.port, executionA, "team-a-op-token");
+      expect(doneA.execution.tenant_id).toBe("team_a");
+
+      const createdB = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-b-op-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "call_webhook_demo",
+          actor_role: "admin",
+          dry_run: true
+        })
+      });
+      expect(createdB.status).toBe(202);
+      const createdBPayload = (await createdB.json()) as Record<string, unknown>;
+      expect(createdBPayload.tenant_id).toBe("team_b");
+      const executionB = String(createdBPayload.execution_id);
+      const doneB = await waitForExecution(server.port, executionB, "team-b-op-token");
+      expect(doneB.execution.tenant_id).toBe("team_b");
+
+      const ownTenant = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        headers: { authorization: "Bearer team-a-op-token" }
+      });
+      expect(ownTenant.status).toBe(200);
+      const ownTenantPayload = (await ownTenant.json()) as {
+        filters: { tenant_id: string | null };
+        executions: Array<{ execution_id: string; tenant_id: string }>;
+      };
+      expect(ownTenantPayload.filters.tenant_id).toBe("team_a");
+      expect(ownTenantPayload.executions.some((execution) => execution.execution_id === executionA)).toBe(true);
+      expect(ownTenantPayload.executions.some((execution) => execution.execution_id === executionB)).toBe(false);
+      expect(ownTenantPayload.executions.every((execution) => execution.tenant_id === "team_a")).toBe(true);
+
+      const forbidden = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions?tenant_id=team_b`, {
+        headers: { authorization: "Bearer team-a-op-token" }
+      });
+      expect(forbidden.status).toBe(403);
+      const forbiddenPayload = (await forbidden.json()) as Record<string, unknown>;
+      expect(forbiddenPayload.error_code).toBe("TENANT_FORBIDDEN");
+
+      const crossTenant = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions?tenant_id=team_b`, {
+        headers: { authorization: "Bearer team-a-admin-token" }
+      });
+      expect(crossTenant.status).toBe(200);
+      const crossTenantPayload = (await crossTenant.json()) as {
+        filters: { tenant_id: string | null };
+        executions: Array<{ execution_id: string; tenant_id: string }>;
+      };
+      expect(crossTenantPayload.filters.tenant_id).toBe("team_b");
+      expect(crossTenantPayload.executions.some((execution) => execution.execution_id === executionB)).toBe(true);
+      expect(crossTenantPayload.executions.every((execution) => execution.tenant_id === "team_b")).toBe(true);
     } finally {
       await server.close();
     }
