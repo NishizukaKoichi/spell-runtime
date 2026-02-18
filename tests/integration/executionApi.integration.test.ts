@@ -62,6 +62,11 @@ describe("execution api integration", () => {
       expect((done.receipt as Record<string, unknown>).tenant_id).toBe("default");
       expect(JSON.stringify(done.receipt)).not.toContain("stdout_head");
       expect(JSON.stringify(done.receipt)).not.toContain("stderr_head");
+
+      const statuses = await waitForTenantAuditStatuses(tempHome, executionId, new Set(["queued", "running", "succeeded"]));
+      expect(statuses).toContain("queued");
+      expect(statuses).toContain("running");
+      expect(statuses).toContain("succeeded");
     } finally {
       await server.close();
     }
@@ -539,6 +544,133 @@ describe("execution api integration", () => {
     }
   });
 
+  test("applies tenant POST rate limit per tenant_id", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json"),
+      authKeys: ["team_a:operator=team-a-op-token", "team_b:operator=team-b-op-token"],
+      rateLimitWindowMs: 60_000,
+      rateLimitMaxRequests: 50,
+      tenantRateLimitWindowMs: 60_000,
+      tenantRateLimitMaxRequests: 1
+    });
+
+    try {
+      const firstA = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-a-op-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "call_webhook_demo",
+          actor_role: "admin",
+          dry_run: true
+        })
+      });
+      expect(firstA.status).toBe(202);
+
+      const secondA = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-a-op-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "call_webhook_demo",
+          actor_role: "admin",
+          dry_run: true
+        })
+      });
+      expect(secondA.status).toBe(429);
+      const secondAPayload = (await secondA.json()) as Record<string, unknown>;
+      expect(secondAPayload.error_code).toBe("TENANT_RATE_LIMITED");
+
+      const firstB = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-b-op-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "call_webhook_demo",
+          actor_role: "admin",
+          dry_run: true
+        })
+      });
+      expect(firstB.status).toBe(202);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("blocks when tenant in-flight concurrency limit is reached", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json"),
+      authKeys: ["team_a:operator=team-a-op-token"],
+      maxConcurrentExecutions: 10,
+      tenantMaxConcurrentExecutions: 0
+    });
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-a-op-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "call_webhook_demo",
+          actor_role: "admin",
+          dry_run: true
+        })
+      });
+
+      expect(response.status).toBe(429);
+      const payload = (await response.json()) as Record<string, unknown>;
+      expect(payload.error_code).toBe("TENANT_CONCURRENCY_LIMITED");
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("GET /api/tenants/:tenant_id/usage enforces auth and admin role with auth keys", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json"),
+      authKeys: ["team_a:operator=team-a-op-token", "team_a:admin=team-a-admin-token"]
+    });
+
+    try {
+      const unauthorized = await fetch(`http://127.0.0.1:${server.port}/api/tenants/team_a/usage`);
+      expect(unauthorized.status).toBe(401);
+      const unauthorizedPayload = (await unauthorized.json()) as Record<string, unknown>;
+      expect(unauthorizedPayload.error_code).toBe("AUTH_REQUIRED");
+
+      const created = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-a-op-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "call_webhook_demo",
+          actor_role: "admin",
+          dry_run: true
+        })
+      });
+      expect(created.status).toBe(202);
+
+      const forbidden = await fetch(`http://127.0.0.1:${server.port}/api/tenants/team_a/usage`, {
+        headers: { authorization: "Bearer team-a-op-token" }
+      });
+      expect(forbidden.status).toBe(403);
+      const forbiddenPayload = (await forbidden.json()) as Record<string, unknown>;
+      expect(forbiddenPayload.error_code).toBe("ADMIN_ROLE_REQUIRED");
+
+      const allowed = await fetch(`http://127.0.0.1:${server.port}/api/tenants/team_a/usage`, {
+        headers: { authorization: "Bearer team-a-admin-token" }
+      });
+      expect(allowed.status).toBe(200);
+      const allowedPayload = (await allowed.json()) as {
+        tenant_id: string;
+        usage: { queued: number; running: number; submissions_last_24h: number };
+      };
+      expect(allowedPayload.tenant_id).toBe("team_a");
+      expect(typeof allowedPayload.usage.queued).toBe("number");
+      expect(typeof allowedPayload.usage.running).toBe("number");
+      expect(allowedPayload.usage.submissions_last_24h).toBeGreaterThanOrEqual(1);
+    } finally {
+      await server.close();
+    }
+  });
+
   test("applies POST rate limit", async () => {
     const server = await startExecutionApiServer({
       port: 0,
@@ -621,6 +753,42 @@ async function waitForExecution(
   }
 
   throw new Error("execution did not finish in time");
+}
+
+async function waitForTenantAuditStatuses(
+  homeDir: string,
+  executionId: string,
+  requiredStatuses: Set<string>
+): Promise<string[]> {
+  const auditPath = path.join(homeDir, ".spell", "logs", "tenant-audit.jsonl");
+  const deadline = Date.now() + 4_000;
+
+  while (Date.now() < deadline) {
+    const auditRaw = await readFile(auditPath, "utf8").catch(() => "");
+    const statuses = auditRaw
+      .trim()
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((event) => event.execution_id === executionId)
+      .map((event) => String(event.status));
+
+    const statusSet = new Set(statuses);
+    let allPresent = true;
+    for (const required of requiredStatuses) {
+      if (!statusSet.has(required)) {
+        allPresent = false;
+        break;
+      }
+    }
+    if (allPresent) {
+      return statuses;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
+
+  throw new Error("tenant audit statuses not found in time");
 }
 
 async function createExecution(

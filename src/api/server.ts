@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID, timingSafeEqual } from "node:crypto";
@@ -15,7 +15,10 @@ export interface ExecutionApiServerOptions {
   executionTimeoutMs?: number;
   rateLimitWindowMs?: number;
   rateLimitMaxRequests?: number;
+  tenantRateLimitWindowMs?: number;
+  tenantRateLimitMaxRequests?: number;
   maxConcurrentExecutions?: number;
+  tenantMaxConcurrentExecutions?: number;
   authTokens?: string[];
   authKeys?: string[];
   logRetentionDays?: number;
@@ -84,7 +87,10 @@ const DEFAULT_BODY_LIMIT = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_RATE_WINDOW_MS = 60_000;
 const DEFAULT_RATE_MAX = 20;
+const DEFAULT_TENANT_RATE_WINDOW_MS = 60_000;
+const DEFAULT_TENANT_RATE_MAX = 20;
 const DEFAULT_MAX_CONCURRENT_EXECUTIONS = 4;
+const DEFAULT_TENANT_MAX_CONCURRENT_EXECUTIONS = 2;
 const DEFAULT_LIST_LIMIT = 100;
 const MAX_LIST_LIMIT = 500;
 const DEFAULT_LOG_RETENTION_DAYS = 14;
@@ -103,7 +109,10 @@ export async function startExecutionApiServer(
   const jobs = await loadExecutionJobsIndex(executionIndexPath);
   const recovered = recoverInterruptedJobs(jobs);
   const postHistoryByIp = new Map<string, number[]>();
+  const postHistoryByTenant = new Map<string, number[]>();
   const runningJobPromises = new Set<Promise<void>>();
+  const tenantAuditPath = path.join(logsRoot(), "tenant-audit.jsonl");
+  let tenantAuditQueue = Promise.resolve();
   let persistQueue = Promise.resolve();
 
   const persistJobs = async (): Promise<void> => {
@@ -114,12 +123,26 @@ export async function startExecutionApiServer(
       });
     await persistQueue;
   };
+  const appendTenantAudit = async (job: ExecutionJob): Promise<void> => {
+    const event = makeTenantAuditEvent(job);
+    const line = `${JSON.stringify(event)}\n`;
+    tenantAuditQueue = tenantAuditQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await appendFile(tenantAuditPath, line, "utf8");
+      });
+    await tenantAuditQueue;
+  };
 
   const bodyLimit = options.requestBodyLimitBytes ?? DEFAULT_BODY_LIMIT;
   const executionTimeoutMs = options.executionTimeoutMs ?? DEFAULT_TIMEOUT_MS;
   const rateWindowMs = options.rateLimitWindowMs ?? DEFAULT_RATE_WINDOW_MS;
   const rateMaxRequests = options.rateLimitMaxRequests ?? DEFAULT_RATE_MAX;
+  const tenantRateWindowMs = options.tenantRateLimitWindowMs ?? DEFAULT_TENANT_RATE_WINDOW_MS;
+  const tenantRateMaxRequests = options.tenantRateLimitMaxRequests ?? DEFAULT_TENANT_RATE_MAX;
   const maxConcurrentExecutions = options.maxConcurrentExecutions ?? DEFAULT_MAX_CONCURRENT_EXECUTIONS;
+  const tenantMaxConcurrentExecutions =
+    options.tenantMaxConcurrentExecutions ?? DEFAULT_TENANT_MAX_CONCURRENT_EXECUTIONS;
   const authTokens = new Set(
     (options.authTokens ?? []).map((token) => token.trim()).filter((token) => token.length > 0)
   );
@@ -172,11 +195,20 @@ export async function startExecutionApiServer(
       }
 
       if (method === "POST" && route === "/spell-executions") {
+        const tenantId = authContext.ok ? authContext.tenantId : DEFAULT_TENANT_ID;
         if (countInFlightJobs(jobs) >= maxConcurrentExecutions) {
           return sendJson(res, 429, {
             ok: false,
             error_code: "CONCURRENCY_LIMITED",
             message: `too many in-flight executions: max ${maxConcurrentExecutions}`
+          });
+        }
+
+        if (countInFlightJobsForTenant(jobs, tenantId) >= tenantMaxConcurrentExecutions) {
+          return sendJson(res, 429, {
+            ok: false,
+            error_code: "TENANT_CONCURRENCY_LIMITED",
+            message: `too many in-flight executions for tenant ${tenantId}: max ${tenantMaxConcurrentExecutions}`
           });
         }
 
@@ -186,6 +218,14 @@ export async function startExecutionApiServer(
             ok: false,
             error_code: "RATE_LIMITED",
             message: "too many requests"
+          });
+        }
+
+        if (!allowRate(tenantId, postHistoryByTenant, tenantRateWindowMs, tenantRateMaxRequests)) {
+          return sendJson(res, 429, {
+            ok: false,
+            error_code: "TENANT_RATE_LIMITED",
+            message: `too many requests for tenant ${tenantId}`
           });
         }
 
@@ -223,7 +263,6 @@ export async function startExecutionApiServer(
           parsed.actor_role ??
           req.headers["x-role"]?.toString() ??
           "anonymous";
-        const tenantId = authContext.ok ? authContext.tenantId : DEFAULT_TENANT_ID;
         if (!entry.allowed_roles.includes(actorRole)) {
           return sendJson(res, 403, {
             ok: false,
@@ -275,6 +314,7 @@ export async function startExecutionApiServer(
 
         jobs.set(executionId, job);
         await persistJobs();
+        await appendTenantAudit(job).catch(() => undefined);
         let runningJob: Promise<void>;
         runningJob = runJob(
           job,
@@ -285,6 +325,7 @@ export async function startExecutionApiServer(
           executionTimeoutMs,
           jobs,
           persistJobs,
+          appendTenantAudit,
           {
             logsDirectory,
             logRetentionDays,
@@ -363,6 +404,32 @@ export async function startExecutionApiServer(
         });
       }
 
+      if (method === "GET" && route.startsWith("/tenants/") && route.endsWith("/usage")) {
+        const matched = /^\/tenants\/([^/]+)\/usage$/.exec(route);
+        const tenantId = matched && matched[1] ? matched[1].trim() : "";
+        if (!tenantId || !AUTH_KEY_SEGMENT_PATTERN.test(tenantId)) {
+          return sendJson(res, 400, {
+            ok: false,
+            error_code: "INVALID_TENANT_ID",
+            message: "invalid tenant id"
+          });
+        }
+
+        if (authKeys.length > 0 && (!authContext.ok || authContext.role !== "admin")) {
+          return sendJson(res, 403, {
+            ok: false,
+            error_code: "ADMIN_ROLE_REQUIRED",
+            message: "admin role required for tenant usage"
+          });
+        }
+
+        return sendJson(res, 200, {
+          ok: true,
+          tenant_id: tenantId,
+          usage: summarizeTenantUsage(jobs, tenantId)
+        });
+      }
+
       if (method === "GET" && route.startsWith("/spell-executions/")) {
         const executionId = route.slice("/spell-executions/".length);
         if (!executionId || !/^[a-zA-Z0-9_.-]+$/.test(executionId)) {
@@ -421,6 +488,7 @@ async function runJob(
   executionTimeoutMs: number,
   jobs: Map<string, ExecutionJob>,
   persistJobs: () => Promise<void>,
+  appendTenantAudit: (job: ExecutionJob) => Promise<void>,
   retention: {
     logsDirectory: string;
     logRetentionDays: number;
@@ -449,6 +517,7 @@ async function runJob(
   };
   jobs.set(job.execution_id, running);
   await persistJobs();
+  await appendTenantAudit(running).catch(() => undefined);
 
   const child = spawn(process.execPath, args, {
     shell: false,
@@ -503,25 +572,29 @@ async function runJob(
   };
 
   if (timeoutHit) {
-    jobs.set(job.execution_id, {
+    const timedOut: ExecutionJob = {
       ...finishedBase,
       status: "timeout",
       error_code: "EXECUTION_TIMEOUT",
       message: `execution exceeded timeout ${executionTimeoutMs}ms`
-    });
+    };
+    jobs.set(job.execution_id, timedOut);
     await persistJobs();
+    await appendTenantAudit(timedOut).catch(() => undefined);
     await applyLogRetentionAndPersist(retention, jobs, persistJobs);
     await rm(tempDir, { recursive: true, force: true });
     return;
   }
 
   if (exitCode === 0) {
-    jobs.set(job.execution_id, {
+    const succeeded: ExecutionJob = {
       ...finishedBase,
       status: "succeeded",
       message: "completed"
-    });
+    };
+    jobs.set(job.execution_id, succeeded);
     await persistJobs();
+    await appendTenantAudit(succeeded).catch(() => undefined);
     await applyLogRetentionAndPersist(retention, jobs, persistJobs);
     await rm(tempDir, { recursive: true, force: true });
     return;
@@ -529,13 +602,15 @@ async function runJob(
 
   const mapped = mapRuntimeError(stderr || stdout);
   const status: JobStatus = mapped.code === "EXECUTION_TIMEOUT" ? "timeout" : "failed";
-  jobs.set(job.execution_id, {
+  const failed: ExecutionJob = {
     ...finishedBase,
     status,
     error_code: mapped.code,
     message: mapped.message
-  });
+  };
+  jobs.set(job.execution_id, failed);
   await persistJobs();
+  await appendTenantAudit(failed).catch(() => undefined);
   await applyLogRetentionAndPersist(retention, jobs, persistJobs);
 
   await rm(tempDir, { recursive: true, force: true });
@@ -748,6 +823,19 @@ function allowRate(
   return true;
 }
 
+function countInFlightJobsForTenant(jobs: Map<string, ExecutionJob>, tenantId: string): number {
+  let total = 0;
+  for (const job of jobs.values()) {
+    if (job.tenant_id !== tenantId) {
+      continue;
+    }
+    if (job.status === "queued" || job.status === "running") {
+      total += 1;
+    }
+  }
+  return total;
+}
+
 function countInFlightJobs(jobs: Map<string, ExecutionJob>): number {
   let total = 0;
   for (const job of jobs.values()) {
@@ -821,7 +909,12 @@ function isJobStatus(value: string): value is JobStatus {
 }
 
 function requiresApiAuth(route: string): boolean {
-  return route === "/buttons" || route === "/spell-executions" || route.startsWith("/spell-executions/");
+  return (
+    route === "/buttons" ||
+    route === "/spell-executions" ||
+    route.startsWith("/spell-executions/") ||
+    route.startsWith("/tenants/")
+  );
 }
 
 function authorizeRequest(
@@ -1218,6 +1311,51 @@ function normalizeTenantId(value: unknown): string {
     return DEFAULT_TENANT_ID;
   }
   return tenantId;
+}
+
+function summarizeTenantUsage(
+  jobs: Map<string, ExecutionJob>,
+  tenantId: string
+): { queued: number; running: number; submissions_last_24h: number } {
+  let queued = 0;
+  let running = 0;
+  let submissionsLast24h = 0;
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+
+  for (const job of jobs.values()) {
+    if (job.tenant_id !== tenantId) {
+      continue;
+    }
+
+    if (job.status === "queued") {
+      queued += 1;
+    } else if (job.status === "running") {
+      running += 1;
+    }
+
+    const createdAt = Date.parse(job.created_at);
+    if (Number.isFinite(createdAt) && createdAt >= cutoff) {
+      submissionsLast24h += 1;
+    }
+  }
+
+  return {
+    queued,
+    running,
+    submissions_last_24h: submissionsLast24h
+  };
+}
+
+function makeTenantAuditEvent(job: ExecutionJob): Record<string, unknown> {
+  return {
+    ts: new Date().toISOString(),
+    tenant_id: job.tenant_id,
+    execution_id: job.execution_id,
+    button_id: job.button_id,
+    status: job.status,
+    actor_role: job.actor_role,
+    ...(job.error_code ? { error_code: job.error_code } : {})
+  };
 }
 
 function deepMerge(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {

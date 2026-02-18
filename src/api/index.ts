@@ -7,7 +7,10 @@ async function main(): Promise<void> {
   const executionTimeoutMs = readOptionalIntegerEnv("SPELL_API_EXECUTION_TIMEOUT_MS", 1);
   const rateLimitWindowMs = readOptionalIntegerEnv("SPELL_API_RATE_LIMIT_WINDOW_MS", 1);
   const rateLimitMaxRequests = readOptionalIntegerEnv("SPELL_API_RATE_LIMIT_MAX_REQUESTS", 1);
+  const tenantRateLimitWindowMs = readOptionalIntegerEnv("SPELL_API_TENANT_RATE_LIMIT_WINDOW_MS", 1);
+  const tenantRateLimitMaxRequests = readOptionalIntegerEnv("SPELL_API_TENANT_RATE_LIMIT_MAX_REQUESTS", 1);
   const maxConcurrentExecutions = readOptionalIntegerEnv("SPELL_API_MAX_CONCURRENT_EXECUTIONS", 0);
+  const tenantMaxConcurrentExecutions = readOptionalIntegerEnv("SPELL_API_TENANT_MAX_CONCURRENT_EXECUTIONS", 0);
   const authTokens = readOptionalCsvEnv("SPELL_API_AUTH_TOKENS");
   const authKeys = readOptionalCsvEnv("SPELL_API_AUTH_KEYS");
   const logRetentionDays = readOptionalIntegerEnv("SPELL_API_LOG_RETENTION_DAYS", 0);
@@ -20,7 +23,10 @@ async function main(): Promise<void> {
     executionTimeoutMs,
     rateLimitWindowMs,
     rateLimitMaxRequests,
+    tenantRateLimitWindowMs,
+    tenantRateLimitMaxRequests,
     maxConcurrentExecutions,
+    tenantMaxConcurrentExecutions,
     authTokens,
     authKeys,
     logRetentionDays,

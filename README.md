@@ -403,8 +403,11 @@ By default it listens on `:8787` and reads:
 - limits:
   - request body: `64KB`
   - execution timeout: `60s`
+  - tenant POST rate: `20/60s`
   - in-flight executions: `4`
+  - in-flight executions per tenant: `2`
 - execution index persistence: `~/.spell/logs/index.json`
+- tenant audit log: `~/.spell/logs/tenant-audit.jsonl`
 - routes:
   - `GET /` (minimal Receipts UI)
   - `GET /ui/app.js` (UI client script)
@@ -412,6 +415,7 @@ By default it listens on `:8787` and reads:
   - `GET /api/spell-executions` (`status`, `button_id`, `tenant_id`, `limit` query supported)
   - `POST /api/spell-executions`
   - `GET /api/spell-executions/:execution_id`
+  - `GET /api/tenants/:tenant_id/usage`
 
 Optional environment variables:
 - `SPELL_API_PORT`
@@ -422,13 +426,18 @@ Optional environment variables:
 - `SPELL_API_EXECUTION_TIMEOUT_MS`
 - `SPELL_API_RATE_LIMIT_WINDOW_MS`
 - `SPELL_API_RATE_LIMIT_MAX_REQUESTS`
+- `SPELL_API_TENANT_RATE_LIMIT_WINDOW_MS` (default `60000`)
+- `SPELL_API_TENANT_RATE_LIMIT_MAX_REQUESTS` (default `20`)
 - `SPELL_API_MAX_CONCURRENT_EXECUTIONS`
+- `SPELL_API_TENANT_MAX_CONCURRENT_EXECUTIONS` (default `2`)
 - `SPELL_API_LOG_RETENTION_DAYS` (default `14`, `0` disables age-based pruning)
 - `SPELL_API_LOG_MAX_FILES` (default `500`, `0` disables count-based pruning)
 
 Security note:
 - execution logs redact secret-like keys (`token`, `authorization`, `apiKey`, etc.)
 - environment-derived secret values are masked in persisted logs
+- tenant audit events (`queued`/`running`/`succeeded`/`failed`/`timeout`) are appended as JSONL records to `~/.spell/logs/tenant-audit.jsonl`
 - when auth is enabled, pass `Authorization: Bearer <token>` (or `x-api-key`) for `/api` routes
 - with `SPELL_API_AUTH_KEYS`, non-admin list requests are restricted to their own tenant and cross-tenant `tenant_id` filters return `403` (`TENANT_FORBIDDEN`)
+- with `SPELL_API_AUTH_KEYS`, `GET /api/tenants/:tenant_id/usage` requires an `admin` key
 - do not set both `SPELL_API_AUTH_KEYS` and `SPELL_API_AUTH_TOKENS` at the same time
