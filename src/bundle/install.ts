@@ -28,8 +28,11 @@ export interface InstallResult {
 }
 
 export async function installBundle(sourceInput: string): Promise<InstallResult> {
-  const resolvedInput = isRegistrySource(sourceInput) ? await resolveRegistryInstallSource(sourceInput) : sourceInput;
-  const source = await resolveInstallSource(resolvedInput);
+  const registrySource = isRegistrySource(sourceInput) ? await resolveRegistryInstallSource(sourceInput) : undefined;
+  const resolvedInput = registrySource?.source ?? sourceInput;
+  const source = await resolveInstallSource(resolvedInput, {
+    expectedRegistryCommit: registrySource?.expectedCommit
+  });
   try {
     return await installBundleFromSource(source.sourceRoot, source.provenance);
   } finally {
@@ -124,13 +127,17 @@ interface InstallSource {
   cleanup: () => Promise<void>;
 }
 
+interface InstallSourceOptions {
+  expectedRegistryCommit?: string;
+}
+
 function isRegistrySource(value: string): boolean {
   return value.startsWith("registry:");
 }
 
-async function resolveInstallSource(input: string): Promise<InstallSource> {
+async function resolveInstallSource(input: string, options: InstallSourceOptions = {}): Promise<InstallSource> {
   if (isGitSource(input)) {
-    return cloneGitSource(input);
+    return cloneGitSource(input, options.expectedRegistryCommit);
   }
 
   const sourcePath = path.resolve(input);
@@ -155,7 +162,7 @@ function isGitSource(value: string): boolean {
   return /^https:\/\//i.test(value) || /^ssh:\/\//i.test(value) || /^git@[^:]+:.+/.test(value);
 }
 
-async function cloneGitSource(source: string): Promise<InstallSource> {
+async function cloneGitSource(source: string, expectedRegistryCommit?: string): Promise<InstallSource> {
   const { gitUrl, ref } = parsePinnedGitSource(source);
   const tempRoot = await mkdtemp(path.join(tmpdir(), "spell-install-"));
   const cloneRoot = path.join(tempRoot, "bundle");
@@ -163,6 +170,9 @@ async function cloneGitSource(source: string): Promise<InstallSource> {
   try {
     await runGitClone(gitUrl, cloneRoot, ref, source);
     const commit = await runGitRevParseHead(cloneRoot, source);
+    if (expectedRegistryCommit && !matchesCommitIgnoreCase(commit, expectedRegistryCommit)) {
+      throw new SpellError(`registry commit mismatch: expected ${expectedRegistryCommit}, got ${commit}`);
+    }
 
     const sourceRoot = await realpath(cloneRoot);
 
@@ -194,6 +204,10 @@ function parsePinnedGitSource(source: string): { gitUrl: string; ref: string } {
     gitUrl: source.slice(0, hashIndex),
     ref: source.slice(hashIndex + 1)
   };
+}
+
+function matchesCommitIgnoreCase(actual: string, expected: string): boolean {
+  return actual.toLowerCase() === expected.toLowerCase();
 }
 
 async function runGitClone(gitUrl: string, targetDir: string, ref: string, source: string): Promise<void> {

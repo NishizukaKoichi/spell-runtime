@@ -18,6 +18,7 @@ export interface RegistrySpellEntry {
   id: string;
   version: string;
   source: string;
+  commit?: string;
 }
 
 export interface RegistryIndexV1 {
@@ -28,6 +29,11 @@ export interface RegistryIndexV1 {
 export interface RegistryInstallRef {
   id: string;
   version: string;
+}
+
+export interface RegistryInstallSource {
+  source: string;
+  expectedCommit?: string;
 }
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });
@@ -71,7 +77,8 @@ const registryIndexSchema = {
         properties: {
           id: { type: "string", minLength: 1 },
           version: { type: "string", minLength: 1 },
-          source: { type: "string", minLength: 1 }
+          source: { type: "string", minLength: 1 },
+          commit: { type: "string", pattern: "^[0-9a-fA-F]{40}$" }
         }
       }
     }
@@ -179,7 +186,7 @@ export function resolveRegistryEntry(index: RegistryIndexV1, id: string, version
   return found;
 }
 
-export async function resolveRegistryInstallSource(sourceInput: string): Promise<string> {
+export async function resolveRegistryInstallSource(sourceInput: string): Promise<RegistryInstallSource> {
   const parsed = parseRegistryInstallRef(sourceInput);
   const config = await readRegistryConfig();
   const defaultIndex = config.indexes.find((index) => index.name === "default");
@@ -196,7 +203,10 @@ export async function resolveRegistryInstallSource(sourceInput: string): Promise
     );
   }
 
-  return source;
+  return {
+    source,
+    expectedCommit: entry.commit
+  };
 }
 
 async function fetchRegistryIndex(url: string): Promise<RegistryIndexV1> {

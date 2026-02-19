@@ -19,7 +19,8 @@ describe("install registry index", () => {
           {
             id: "fixtures/hello-host",
             version: "2.0.0",
-            source: "https://spell.test/hello-host.git#v2"
+            source: "https://spell.test/hello-host.git#v2",
+            commit: "AABBCCDDEEFF00112233445566778899AABBCCDD"
           }
         ]
       }),
@@ -28,6 +29,7 @@ describe("install registry index", () => {
 
     const resolved = resolveRegistryEntry(index, "fixtures/hello-host", "2.0.0");
     expect(resolved.source).toBe("https://spell.test/hello-host.git#v2");
+    expect(resolved.commit).toBe("AABBCCDDEEFF00112233445566778899AABBCCDD");
   });
 
   test("requires exact id/version match", () => {
@@ -48,6 +50,25 @@ describe("install registry index", () => {
     expect(() => parseRegistryIndexJson(JSON.stringify({ version: "v1", spells: [{ id: "fixtures/hello-host" }] }), "inline")).toThrow(
       /registry index validation failed/
     );
+  });
+
+  test("rejects invalid commit pin in registry index", () => {
+    expect(() =>
+      parseRegistryIndexJson(
+        JSON.stringify({
+          version: "v1",
+          spells: [
+            {
+              id: "fixtures/hello-host",
+              version: "1.0.0",
+              source: "https://spell.test/hello-host.git#main",
+              commit: "ZZZZCCDDEEFF00112233445566778899AABBCCDD"
+            }
+          ]
+        }),
+        "inline"
+      )
+    ).toThrow(/registry index validation failed/);
   });
 
   test("parses registry install source", () => {

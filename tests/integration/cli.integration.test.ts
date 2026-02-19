@@ -114,7 +114,8 @@ describe("spell cli integration", () => {
           {
             id: "fixtures/hello-host",
             version: "1.0.0",
-            source: gitSource
+            source: gitSource,
+            commit: gitRepo.commit.toUpperCase()
           }
         ]
       });
@@ -150,6 +151,39 @@ describe("spell cli integration", () => {
     const result = await runCliCapture(["node", "spell", "install", "registry:fixtures/hello-host@1.0.0"]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("registry entry not found: fixtures/hello-host@1.0.0");
+  });
+
+  test("registry install fails when commit pin does not match cloned HEAD", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    const gitRepo = await createBareGitRepoFromSource(fixture);
+    const gitUrl = "https://spell.test/hello-host.git";
+    const gitSource = `${gitUrl}#main`;
+    const indexUrl = "https://registry.test/spell-index.v1.json";
+    const expectedCommit = "0000000000000000000000000000000000000000";
+
+    try {
+      expect(await runCli(["node", "spell", "registry", "set", indexUrl])).toBe(0);
+
+      nock("https://registry.test").get("/spell-index.v1.json").reply(200, {
+        version: "v1",
+        spells: [
+          {
+            id: "fixtures/hello-host",
+            version: "1.0.0",
+            source: gitSource,
+            commit: expectedCommit
+          }
+        ]
+      });
+
+      const result = await withGitUrlRewrite(gitUrl, gitRepo.remotePath, async () =>
+        runCliCapture(["node", "spell", "install", "registry:fixtures/hello-host@1.0.0"])
+      );
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain(`registry commit mismatch: expected ${expectedCommit}, got ${gitRepo.commit}`);
+    } finally {
+      await rm(gitRepo.tempDir, { recursive: true, force: true });
+    }
   });
 
   test("install from git source requires explicit ref", async () => {

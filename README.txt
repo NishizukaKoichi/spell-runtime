@@ -65,6 +65,9 @@ Git sources must include #<ref>. If omitted, install fails with:
 
 When a git source is provided, runtime clones the repository, checks out the requested ref, resolves the checked-out commit SHA (git rev-parse HEAD), and installs from that checkout.
 
+For registry installs, each index entry may also include an optional commit pin (40-char SHA-1). When present, install compares the cloned HEAD commit to the pinned value (case-insensitive) and fails on mismatch:
+  registry commit mismatch: expected <expected>, got <actual>
+
 Registry setup example:
   spell registry set https://registry.example.test/spell-index.v1.json
   spell registry show
@@ -79,7 +82,14 @@ Registry config file (~/.spell/registry.json):
 Minimal registry index schema:
 {
   "version": "v1",
-  "spells": [{ "id": "fixtures/hello-host", "version": "1.0.0", "source": "https://spell.test/hello-host.git#main" }]
+  "spells": [
+    {
+      "id": "fixtures/hello-host",
+      "version": "1.0.0",
+      "source": "https://spell.test/hello-host.git#main",
+      "commit": "0123456789abcdef0123456789abcdef01234567"
+    }
+  ]
 }
 
 Limitations:
