@@ -30,6 +30,10 @@ export function registryConfigPath(): string {
   return path.join(spellHome(), "registry.json");
 }
 
+export function runtimePolicyPath(): string {
+  return path.join(spellHome(), "policy.json");
+}
+
 export async function ensureSpellDirs(): Promise<void> {
   await mkdir(spellsRoot(), { recursive: true });
   await mkdir(logsRoot(), { recursive: true });

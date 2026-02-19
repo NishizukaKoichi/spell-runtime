@@ -47,6 +47,9 @@ npm run smoke:npx
 - `spell install <source>`
 - `spell registry set <url>`
 - `spell registry show`
+- `spell policy show`
+- `spell policy validate --file <path>`
+- `spell policy set --file <path>`
 - `spell list`
 - `spell inspect <id> [--version x.y.z]`
 - `spell cast <id> [--version x.y.z] [-p key=value ...] [--input input.json] [--dry-run] [--yes] [--allow-billing] [--allow-unsigned] [--require-signature] [--verbose] [--profile <name>]`
@@ -184,6 +187,11 @@ Notes:
 - missing policy file => allow by default
 - invalid policy file => `invalid policy: ...`
 - policy rejection => `policy denied: <reason>`
+
+Policy management commands:
+- `spell policy show` prints the current policy JSON; if missing, it prints a clear message and exits successfully.
+- `spell policy validate --file <path>` validates a candidate JSON file and prints `policy valid` on success.
+- `spell policy set --file <path>` validates then writes normalized JSON to `~/.spell/policy.json`.
 
 ## Runtime Safety Limits (v2 isolation)
 

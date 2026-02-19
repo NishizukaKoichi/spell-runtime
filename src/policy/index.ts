@@ -1,8 +1,7 @@
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { RuntimeExecution, SpellRisk } from "../types";
 import { SpellError } from "../util/errors";
-import { spellHome } from "../util/paths";
+import { runtimePolicyPath } from "../util/paths";
 
 const POLICY_VERSION = "v1";
 
@@ -42,30 +41,22 @@ export interface RuntimePolicyDecision {
 }
 
 export function runtimePolicyFilePath(): string {
-  return path.join(spellHome(), "policy.json");
+  return runtimePolicyPath();
 }
 
 export async function loadRuntimePolicy(): Promise<RuntimePolicyV1 | null> {
   const filePath = runtimePolicyFilePath();
-
-  let raw: string;
-  try {
-    raw = await readFile(filePath, "utf8");
-  } catch (error) {
-    const nodeError = error as NodeJS.ErrnoException;
-    if (nodeError.code === "ENOENT") {
-      return null;
-    }
-    throw invalidPolicy(`failed to read ${filePath}: ${(error as Error).message}`);
+  const raw = await readPolicyFile(filePath, true);
+  if (raw === null) {
+    return null;
   }
+  const parsed = parsePolicyJson(raw);
+  return parseRuntimePolicy(parsed);
+}
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw) as unknown;
-  } catch (error) {
-    throw invalidPolicy(`failed to parse JSON: ${(error as Error).message}`);
-  }
-
+export async function parseRuntimePolicyFile(filePath: string): Promise<RuntimePolicyV1> {
+  const raw = await readPolicyFile(filePath, false);
+  const parsed = parsePolicyJson(raw);
   return parseRuntimePolicy(parsed);
 }
 
@@ -239,6 +230,28 @@ function readRequiredString(obj: Record<string, unknown>, key: string): string {
     throw invalidPolicy(`missing '${key}' string`);
   }
   return value.trim();
+}
+
+function readPolicyFile(filePath: string, allowMissing: true): Promise<string | null>;
+function readPolicyFile(filePath: string, allowMissing: false): Promise<string>;
+async function readPolicyFile(filePath: string, allowMissing: boolean): Promise<string | null> {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException;
+    if (allowMissing && nodeError.code === "ENOENT") {
+      return null;
+    }
+    throw invalidPolicy(`failed to read ${filePath}: ${(error as Error).message}`);
+  }
+}
+
+function parsePolicyJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch (error) {
+    throw invalidPolicy(`failed to parse JSON: ${(error as Error).message}`);
+  }
 }
 
 function invalidPolicy(message: string): SpellError {

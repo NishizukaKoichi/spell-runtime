@@ -71,3 +71,9 @@ v1 intentionally excludes:
 - `spell sign keygen` generates ed25519 keypairs for publishers.
 - `spell sign bundle` writes `spell.sig.json` for local bundles.
 - public keys are registered via `spell trust add`.
+
+## 13. Runtime policy management CLI
+- `~/.spell/policy.json` remains the runtime policy source of truth for cast preflight.
+- `spell policy show` prints current policy JSON or a clear missing-file message (exit 0).
+- `spell policy validate --file <path>` validates with the same runtime parser/validator and prints `policy valid` on success.
+- `spell policy set --file <path>` validates then writes normalized pretty JSON with a trailing newline to `~/.spell/policy.json`.

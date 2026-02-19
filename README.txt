@@ -34,6 +34,9 @@ Manual npx (local package):
 - spell install <source>
 - spell registry set <url>
 - spell registry show
+- spell policy show
+- spell policy validate --file <path>
+- spell policy set --file <path>
 - spell list
 - spell inspect <id> [--version x.y.z]
 - spell cast <id> [--version x.y.z] [-p key=value ...] [--input input.json] [--dry-run] [--yes] [--allow-billing] [--allow-unsigned] [--require-signature] [--verbose] [--profile <name>]
@@ -148,6 +151,11 @@ Notes:
 - missing policy file => allow by default
 - invalid policy file => invalid policy: ...
 - policy rejection => policy denied: <reason>
+
+Policy management commands:
+- spell policy show prints current policy JSON; if missing, it prints a clear message and exits 0.
+- spell policy validate --file <path> validates a candidate file and prints policy valid on success.
+- spell policy set --file <path> validates and writes normalized JSON to ~/.spell/policy.json.
 
 4.1 Runtime safety limits (v2 isolation)
 cast enforces these runtime limits (for direct CLI casts and API-triggered casts, because the API invokes spell cast):

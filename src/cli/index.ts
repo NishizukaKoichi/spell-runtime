@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createPublicKey } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Command } from "commander";
 import { installBundle } from "../bundle/install";
@@ -9,6 +9,7 @@ import { listInstalledSpells, readSchemaFromManifest, resolveInstalledBundle, su
 import { generateSigningKeypair, signBundleFromPrivateKey } from "../signature/signing";
 import { castSpell } from "../runner/cast";
 import { inspectLicense, listLicenses, removeLicense, restoreLicense, revokeLicense, upsertLicense } from "../license/store";
+import { loadRuntimePolicy, parseRuntimePolicyFile, runtimePolicyFilePath } from "../policy";
 import { listTrustedPublishers, removeTrustedPublisher, upsertTrustedPublisherKey } from "../signature/trustStore";
 import { SpellError } from "../util/errors";
 import { logsRoot } from "../util/paths";
@@ -55,6 +56,45 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
       for (const index of config.indexes) {
         process.stdout.write(`${index.name}\t${index.url}\n`);
       }
+    });
+
+  const policy = program.command("policy").description("Manage runtime policy");
+
+  policy
+    .command("show")
+    .description("Show current runtime policy")
+    .action(async () => {
+      const configuredPolicy = await loadRuntimePolicy();
+      if (!configuredPolicy) {
+        process.stdout.write(`No runtime policy configured at ${runtimePolicyFilePath()}\n`);
+        return;
+      }
+      process.stdout.write(`${JSON.stringify(configuredPolicy, null, 2)}\n`);
+    });
+
+  policy
+    .command("validate")
+    .description("Validate a runtime policy file")
+    .requiredOption("--file <path>", "Path to policy JSON")
+    .action(async (options: { file: string }) => {
+      const candidateFile = path.resolve(options.file);
+      await parseRuntimePolicyFile(candidateFile);
+      process.stdout.write("policy valid\n");
+    });
+
+  policy
+    .command("set")
+    .description("Validate and set runtime policy")
+    .requiredOption("--file <path>", "Path to policy JSON")
+    .action(async (options: { file: string }) => {
+      const candidateFile = path.resolve(options.file);
+      const policyConfig = await parseRuntimePolicyFile(candidateFile);
+      const destination = runtimePolicyFilePath();
+
+      await mkdir(path.dirname(destination), { recursive: true });
+      await writeFile(destination, `${JSON.stringify(policyConfig, null, 2)}\n`, "utf8");
+
+      process.stdout.write(`policy written: ${destination}\n`);
     });
 
   program

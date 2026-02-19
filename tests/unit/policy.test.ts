@@ -2,7 +2,13 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { evaluateRuntimePolicy, loadRuntimePolicy, parseRuntimePolicy } from "../../src/policy";
+import {
+  evaluateRuntimePolicy,
+  loadRuntimePolicy,
+  parseRuntimePolicy,
+  parseRuntimePolicyFile,
+  runtimePolicyFilePath
+} from "../../src/policy";
 
 describe("parseRuntimePolicy", () => {
   test("parses valid v1 policy", () => {
@@ -169,11 +175,49 @@ describe("loadRuntimePolicy", () => {
     await expect(loadRuntimePolicy()).resolves.toBeNull();
   });
 
+  test("resolves ~/.spell policy path", () => {
+    expect(runtimePolicyFilePath()).toBe(path.join(tempHome, ".spell", "policy.json"));
+  });
+
   test("fails with invalid policy message for invalid JSON", async () => {
     const spellDir = path.join(tempHome, ".spell");
     await mkdir(spellDir, { recursive: true });
     await writeFile(path.join(spellDir, "policy.json"), "{", "utf8");
 
     await expect(loadRuntimePolicy()).rejects.toThrow("invalid policy: failed to parse JSON:");
+  });
+});
+
+describe("parseRuntimePolicyFile", () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(path.join(tmpdir(), "spell-policy-file-"));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  test("parses a valid policy from an explicit file path", async () => {
+    const filePath = path.join(tempDir, "policy.json");
+    await writeFile(filePath, `${JSON.stringify({ version: "v1", default: "allow" }, null, 2)}\n`, "utf8");
+
+    await expect(parseRuntimePolicyFile(filePath)).resolves.toMatchObject({
+      version: "v1",
+      default: "allow"
+    });
+  });
+
+  test("returns invalid policy when explicit file is missing", async () => {
+    const filePath = path.join(tempDir, "missing-policy.json");
+    await expect(parseRuntimePolicyFile(filePath)).rejects.toThrow(`invalid policy: failed to read ${filePath}:`);
+  });
+
+  test("returns invalid policy when explicit file has invalid JSON", async () => {
+    const filePath = path.join(tempDir, "invalid-policy.json");
+    await writeFile(filePath, "{", "utf8");
+
+    await expect(parseRuntimePolicyFile(filePath)).rejects.toThrow("invalid policy: failed to parse JSON:");
   });
 });

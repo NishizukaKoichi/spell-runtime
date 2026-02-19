@@ -469,6 +469,54 @@ describe("spell cli integration", () => {
     expect(result.stderr).toContain("risk high requires --yes");
   });
 
+  test("policy show reports clear message when ~/.spell/policy.json is missing", async () => {
+    const result = await runCliCapture(["node", "spell", "policy", "show"]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(`No runtime policy configured at ${path.join(tempHome, ".spell", "policy.json")}`);
+  });
+
+  test("policy show prints current policy JSON when file exists", async () => {
+    const spellDir = path.join(tempHome, ".spell");
+    const policyPath = path.join(spellDir, "policy.json");
+    await mkdir(spellDir, { recursive: true });
+    await writeFile(policyPath, `${JSON.stringify({ version: "v1", default: "allow" }, null, 2)}\n`, "utf8");
+
+    const result = await runCliCapture(["node", "spell", "policy", "show"]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe(`${JSON.stringify({ version: "v1", default: "allow" }, null, 2)}\n`);
+  });
+
+  test("policy validate reports policy valid for valid file", async () => {
+    const candidatePath = path.join(tempHome, "candidate-policy.json");
+    await writeFile(candidatePath, `${JSON.stringify({ version: "v1", default: "allow" }, null, 2)}\n`, "utf8");
+
+    const result = await runCliCapture(["node", "spell", "policy", "validate", "--file", candidatePath]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("policy valid");
+  });
+
+  test("policy validate returns invalid policy errors", async () => {
+    const candidatePath = path.join(tempHome, "candidate-invalid-policy.json");
+    await writeFile(candidatePath, `${JSON.stringify({ version: "v1", default: "block" }, null, 2)}\n`, "utf8");
+
+    const result = await runCliCapture(["node", "spell", "policy", "validate", "--file", candidatePath]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("invalid policy: default must be 'allow' or 'deny', got 'block'");
+  });
+
+  test("policy set validates then writes ~/.spell/policy.json", async () => {
+    const candidatePath = path.join(tempHome, "candidate-set-policy.json");
+    await writeFile(candidatePath, `${JSON.stringify({ version: "v1", default: "allow" }, null, 2)}\n`, "utf8");
+
+    const result = await runCliCapture(["node", "spell", "policy", "set", "--file", candidatePath]);
+    const destinationPath = path.join(tempHome, ".spell", "policy.json");
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(`policy written: ${destinationPath}`);
+
+    const stored = await readFile(destinationPath, "utf8");
+    expect(stored).toBe(`${JSON.stringify({ version: "v1", default: "allow" }, null, 2)}\n`);
+  });
+
   test("policy file default deny blocks cast", async () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
     expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
