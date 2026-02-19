@@ -27,6 +27,9 @@ describe("parseRuntimePolicy", () => {
         allow_types: ["notify"],
         deny_types: ["delete"],
         deny_mutations: true
+      },
+      signature: {
+        require_verified: true
       }
     });
 
@@ -45,6 +48,9 @@ describe("parseRuntimePolicy", () => {
         allow_types: ["notify"],
         deny_types: ["delete"],
         deny_mutations: true
+      },
+      signature: {
+        require_verified: true
       }
     });
   });
@@ -69,7 +75,8 @@ describe("evaluateRuntimePolicy", () => {
     publisher: "fixtures",
     risk: "medium" as const,
     execution: "host" as const,
-    effects: [{ type: "notify", target: "stdout", mutates: false }]
+    effects: [{ type: "notify", target: "stdout", mutates: false }],
+    signature_status: "verified" as const
   };
 
   test("allows when policy file is missing", () => {
@@ -255,6 +262,43 @@ describe("evaluateRuntimePolicy", () => {
       allow: false,
       reason: "effect type 'deploy' is denied"
     });
+  });
+
+  test("denies non-verified signature when signature.require_verified is true", () => {
+    const policy = parseRuntimePolicy({
+      version: "v1",
+      default: "allow",
+      signature: {
+        require_verified: true
+      }
+    });
+
+    expect(
+      evaluateRuntimePolicy(policy, {
+        ...context,
+        signature_status: "unsigned"
+      })
+    ).toEqual({
+      allow: false,
+      reason: "signature status 'unsigned' is not allowed (verified required)"
+    });
+  });
+
+  test("allows verified signature when signature.require_verified is true", () => {
+    const policy = parseRuntimePolicy({
+      version: "v1",
+      default: "allow",
+      signature: {
+        require_verified: true
+      }
+    });
+
+    expect(
+      evaluateRuntimePolicy(policy, {
+        ...context,
+        signature_status: "verified"
+      })
+    ).toEqual({ allow: true });
   });
 });
 

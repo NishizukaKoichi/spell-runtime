@@ -39,7 +39,7 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
   program
     .command("install")
     .description("Install a spell bundle from local path, git URL, or registry locator")
-    .argument("<source>", "Path, git URL (requires #<ref>), or registry:<id>@<version>")
+    .argument("<source>", "Path, git URL (requires #<ref>), or registry:<id>[@<version|latest>]")
     .action(async (source: string) => {
       const result = await installBundle(source);
       process.stdout.write(`${result.id}@${result.version}\n`);

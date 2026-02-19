@@ -32,6 +32,9 @@ export interface RuntimePolicyV1 {
     deny_types?: string[];
     deny_mutations?: boolean;
   };
+  signature?: {
+    require_verified?: boolean;
+  };
 }
 
 export interface RuntimePolicyContext {
@@ -39,6 +42,7 @@ export interface RuntimePolicyContext {
   risk: SpellRisk;
   execution: RuntimeExecution;
   effects: SpellEffect[];
+  signature_status?: "skipped" | "verified" | "unsigned" | "untrusted" | "invalid";
 }
 
 export interface RuntimePolicyDecision {
@@ -72,7 +76,7 @@ export function parseRuntimePolicy(raw: unknown): RuntimePolicyV1 {
   }
 
   const obj = raw as Record<string, unknown>;
-  assertOnlyKeys(obj, ["version", "default", "publishers", "max_risk", "runtime", "effects"], "policy");
+  assertOnlyKeys(obj, ["version", "default", "publishers", "max_risk", "runtime", "effects", "signature"], "policy");
 
   const version = readRequiredString(obj, "version");
   if (version !== POLICY_VERSION) {
@@ -88,6 +92,7 @@ export function parseRuntimePolicy(raw: unknown): RuntimePolicyV1 {
   const maxRisk = parseMaxRisk(obj.max_risk);
   const runtime = parseRuntime(obj.runtime);
   const effects = parseEffects(obj.effects);
+  const signature = parseSignature(obj.signature);
 
   return {
     version: "v1",
@@ -95,7 +100,8 @@ export function parseRuntimePolicy(raw: unknown): RuntimePolicyV1 {
     publishers,
     max_risk: maxRisk,
     runtime,
-    effects
+    effects,
+    signature
   };
 }
 
@@ -161,6 +167,13 @@ export function evaluateRuntimePolicy(
     return {
       allow: false,
       reason: `effect type '${notAllowedEffect.type}' is not allowed`
+    };
+  }
+
+  if (policy.signature?.require_verified === true && context.signature_status !== "verified") {
+    return {
+      allow: false,
+      reason: `signature status '${context.signature_status ?? "unknown"}' is not allowed (verified required)`
     };
   }
 
@@ -234,6 +247,22 @@ function parseEffects(raw: unknown): RuntimePolicyV1["effects"] | undefined {
     allow_types: parseStringArray(obj.allow_types, "effects.allow_types"),
     deny_types: parseStringArray(obj.deny_types, "effects.deny_types"),
     deny_mutations: parseBoolean(obj.deny_mutations, "effects.deny_mutations")
+  };
+}
+
+function parseSignature(raw: unknown): RuntimePolicyV1["signature"] | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw invalidPolicy("signature must be an object");
+  }
+
+  const obj = raw as Record<string, unknown>;
+  assertOnlyKeys(obj, ["require_verified"], "signature");
+
+  return {
+    require_verified: parseBoolean(obj.require_verified, "signature.require_verified")
   };
 }
 

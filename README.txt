@@ -66,6 +66,8 @@ Manual npx (local package):
   - local bundle paths (existing behavior)
   - registry locators with explicit id+version:
     - registry:<id>@<version>
+    - registry:<id> (implicit latest)
+    - registry:<id>@latest
   - pinned git URLs with explicit refs:
     - https://...#<ref>
     - ssh://...#<ref>
@@ -183,6 +185,9 @@ Policy file format (~/.spell/policy.json):
     "allow_types": ["notify", "deploy"],
     "deny_types": ["delete"],
     "deny_mutations": false
+  },
+  "signature": {
+    "require_verified": false
   }
 }
 
@@ -193,6 +198,7 @@ Notes:
 - effects.deny_mutations=true denies any spell effect with mutates=true
 - effects.allow_types denies any spell effect type not listed
 - effects.deny_types denies listed effect types and takes precedence over effects.allow_types
+- signature.require_verified=true denies non-verified signatures (unsigned/untrusted/invalid), even when --allow-unsigned is passed
 
 Policy management commands:
 - spell policy show prints current policy JSON; if missing, it prints a clear message and exits 0.
@@ -418,9 +424,10 @@ Defaults:
   GET /
   GET /ui/app.js
   GET /api/buttons (includes allowed_tenants for each button; null when unrestricted)
-  GET /api/spell-executions (status/button_id/tenant_id/limit query supported)
+  GET /api/spell-executions (status/button_id/tenant_id/limit/from/to query supported)
   POST /api/spell-executions (supports optional Idempotency-Key header)
   GET /api/spell-executions/:execution_id
+  GET /api/spell-executions/:execution_id/output?path=step.<name>.(stdout|json[.dot.path])
   POST /api/spell-executions/:execution_id/cancel
   POST /api/spell-executions/:execution_id/retry
   GET /api/tenants/:tenant_id/usage

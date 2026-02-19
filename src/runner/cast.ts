@@ -77,15 +77,6 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
     };
 
     const runtimePolicy = await loadRuntimePolicy();
-    const policyDecision = evaluateRuntimePolicy(runtimePolicy, {
-      publisher: publisherFromId(manifest.id),
-      risk: manifest.risk,
-      execution: manifest.runtime.execution,
-      effects: manifest.effects
-    });
-    if (!policyDecision.allow) {
-      throw new SpellError(`policy denied: ${policyDecision.reason}`);
-    }
 
     log.signature = {
       required: options.requireSignature,
@@ -120,6 +111,17 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
       key_id: sigResult.key_id,
       digest: sigResult.digest
     };
+
+    const policyDecision = evaluateRuntimePolicy(runtimePolicy, {
+      publisher: publisherFromId(manifest.id),
+      risk: manifest.risk,
+      execution: manifest.runtime.execution,
+      effects: manifest.effects,
+      signature_status: sigResult.status
+    });
+    if (!policyDecision.allow) {
+      throw new SpellError(`policy denied: ${policyDecision.reason}`);
+    }
 
     if (options.requireSignature) {
       enforceSignatureOrThrow(sigResult);

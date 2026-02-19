@@ -81,6 +81,8 @@ npm run smoke:npx
 - local bundle paths (existing behavior)
 - registry locators with explicit id+version:
   - `registry:<id>@<version>`
+  - `registry:<id>` (implicit latest)
+  - `registry:<id>@latest`
 - pinned git URLs with an explicit ref suffix:
   - `https://...#<ref>`
   - `ssh://...#<ref>`
@@ -222,6 +224,9 @@ Policy file format (`~/.spell/policy.json`):
     "allow_types": ["notify", "deploy"],
     "deny_types": ["delete"],
     "deny_mutations": false
+  },
+  "signature": {
+    "require_verified": false
   }
 }
 ```
@@ -233,6 +238,7 @@ Notes:
 - `effects.deny_mutations=true` denies any spell effect with `mutates=true`
 - `effects.allow_types` denies any spell effect type not listed
 - `effects.deny_types` denies listed effect types and takes precedence over `effects.allow_types`
+- `signature.require_verified=true` denies non-verified signature states (`unsigned`, `untrusted`, `invalid`) even when `--allow-unsigned` is passed
 
 Policy management commands:
 - `spell policy show` prints the current policy JSON; if missing, it prints a clear message and exits successfully.
@@ -489,7 +495,7 @@ By default it listens on `:8787` and reads:
   - `GET /` (minimal Receipts UI)
   - `GET /ui/app.js` (UI client script)
   - `GET /api/buttons` (includes `allowed_tenants` for each button; `null` when unrestricted)
-- `GET /api/spell-executions` (`status`, `button_id`, `tenant_id`, `limit` query supported)
+- `GET /api/spell-executions` (`status`, `button_id`, `tenant_id`, `limit`, `from`, `to` query supported)
 - `POST /api/spell-executions` (supports optional `Idempotency-Key` header)
 - `GET /api/spell-executions/:execution_id`
 - `GET /api/spell-executions/:execution_id/output?path=step.<name>.(stdout|json[.dot.path])`

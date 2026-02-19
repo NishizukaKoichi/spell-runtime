@@ -99,3 +99,23 @@ v1 intentionally excludes:
   - `step.<stepName>.json`
   - `step.<stepName>.json.<dot.path>`
 - API output reads remain tenant-scoped under auth keys (`TENANT_FORBIDDEN` for cross-tenant non-admin access).
+
+## 15. Registry version resolution strategy
+- registry install supports:
+  - `registry:<id>@<version>` (exact)
+  - `registry:<id>` and `registry:<id>@latest` (latest)
+- latest selection is deterministic:
+  - semver `x.y.z` numeric compare preferred
+  - non-semver fallback uses lexical descending
+- required pin enforcement (`commit`/`digest`) applies to the resolved concrete version entry.
+
+## 16. Signature governance policy
+- runtime policy supports `signature.require_verified`:
+  - when `true`, cast denies non-verified signature states (`unsigned`, `untrusted`, `invalid`)
+  - this applies even if caller passes `--allow-unsigned`
+- this gives operators a global, host-local enforcement switch for signature strictness.
+
+## 17. Execution list time filters
+- execution API list supports optional `from` / `to` ISO-8601 timestamps.
+- filtering is applied on `created_at` (inclusive bounds).
+- invalid timestamps or reversed ranges fail with `INVALID_QUERY`.

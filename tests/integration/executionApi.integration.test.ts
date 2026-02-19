@@ -201,6 +201,51 @@ describe("execution api integration", () => {
     }
   });
 
+  test("GET /api/spell-executions supports from/to time filters", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json")
+    });
+
+    try {
+      const executionId = await createExecution(server.port, {
+        button_id: "call_webhook_demo",
+        actor_role: "admin",
+        dry_run: true
+      });
+      await waitForExecution(server.port, executionId);
+
+      const nowIso = new Date().toISOString();
+      const olderIso = new Date(Date.now() - 60_000).toISOString();
+      const futureIso = new Date(Date.now() + 60_000).toISOString();
+
+      const inRange = await fetch(
+        `http://127.0.0.1:${server.port}/api/spell-executions?from=${encodeURIComponent(olderIso)}&to=${encodeURIComponent(nowIso)}`
+      );
+      expect(inRange.status).toBe(200);
+      const inRangePayload = (await inRange.json()) as {
+        executions: Array<{ execution_id: string }>;
+      };
+      expect(inRangePayload.executions.some((execution) => execution.execution_id === executionId)).toBe(true);
+
+      const outOfRange = await fetch(
+        `http://127.0.0.1:${server.port}/api/spell-executions?from=${encodeURIComponent(futureIso)}`
+      );
+      expect(outOfRange.status).toBe(200);
+      const outOfRangePayload = (await outOfRange.json()) as {
+        executions: Array<{ execution_id: string }>;
+      };
+      expect(outOfRangePayload.executions.some((execution) => execution.execution_id === executionId)).toBe(false);
+
+      const invalid = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions?from=not-a-time`);
+      expect(invalid.status).toBe(400);
+      const invalidPayload = (await invalid.json()) as Record<string, unknown>;
+      expect(invalidPayload.error_code).toBe("INVALID_QUERY");
+    } finally {
+      await server.close();
+    }
+  });
+
   test("GET /api/spell-executions/:execution_id/output returns one output value", async () => {
     const server = await startExecutionApiServer({
       port: 0,

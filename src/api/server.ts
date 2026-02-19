@@ -96,6 +96,8 @@ interface ListExecutionsQuery {
   buttonId: string | null;
   tenantId: string | null;
   limit: number;
+  fromAtMs: number | null;
+  toAtMs: number | null;
 }
 
 interface PersistedExecutionIndexV1 {
@@ -665,7 +667,9 @@ export async function startExecutionApiServer(
             status: effectiveQuery.statuses ? Array.from(effectiveQuery.statuses) : [],
             button_id: effectiveQuery.buttonId ?? null,
             tenant_id: effectiveQuery.tenantId ?? null,
-            limit: effectiveQuery.limit
+            limit: effectiveQuery.limit,
+            from: effectiveQuery.fromAtMs !== null ? new Date(effectiveQuery.fromAtMs).toISOString() : null,
+            to: effectiveQuery.toAtMs !== null ? new Date(effectiveQuery.toAtMs).toISOString() : null
           },
           executions
         });
@@ -1364,6 +1368,8 @@ function parseListExecutionsQuery(params: URLSearchParams): ListExecutionsQuery 
   const buttonIdParam = params.get("button_id");
   const tenantIdParam = params.get("tenant_id");
   const limitParam = params.get("limit");
+  const fromParam = params.get("from");
+  const toParam = params.get("to");
 
   let statuses: Set<JobStatus> | null = null;
   if (statusParam && statusParam.trim() !== "") {
@@ -1396,11 +1402,19 @@ function parseListExecutionsQuery(params: URLSearchParams): ListExecutionsQuery 
     throw new Error(`invalid tenant_id filter: ${tenantId}`);
   }
 
+  const fromAtMs = parseTimeFilter(fromParam, "from");
+  const toAtMs = parseTimeFilter(toParam, "to");
+  if (fromAtMs !== null && toAtMs !== null && fromAtMs > toAtMs) {
+    throw new Error("invalid time range: from must be <= to");
+  }
+
   return {
     statuses,
     buttonId,
     tenantId,
-    limit
+    limit,
+    fromAtMs,
+    toAtMs
   };
 }
 
@@ -1414,7 +1428,32 @@ function matchJobByQuery(job: ExecutionJob, query: ListExecutionsQuery): boolean
   if (query.tenantId && job.tenant_id !== query.tenantId) {
     return false;
   }
+
+  if (query.fromAtMs !== null || query.toAtMs !== null) {
+    const createdAtMs = Date.parse(job.created_at);
+    if (!Number.isFinite(createdAtMs)) {
+      return false;
+    }
+    if (query.fromAtMs !== null && createdAtMs < query.fromAtMs) {
+      return false;
+    }
+    if (query.toAtMs !== null && createdAtMs > query.toAtMs) {
+      return false;
+    }
+  }
+
   return true;
+}
+
+function parseTimeFilter(raw: string | null, label: string): number | null {
+  if (!raw || raw.trim() === "") {
+    return null;
+  }
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`invalid ${label}: expected ISO-8601 timestamp`);
+  }
+  return parsed;
 }
 
 function isJobStatus(value: string): value is JobStatus {

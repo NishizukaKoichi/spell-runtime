@@ -3,6 +3,7 @@ import Ajv2020, { type AnySchema } from "ajv/dist/2020";
 import { SpellError } from "../util/errors";
 import { fetchHttp } from "../util/http";
 import { registryConfigPath, spellHome } from "../util/paths";
+import { selectLatestVersion } from "../util/version";
 
 export interface RegistryIndexRef {
   name: string;
@@ -240,25 +241,48 @@ export function parseRegistryIndexJson(raw: string, source: string): RegistryInd
 
 export function parseRegistryInstallRef(value: string): RegistryInstallRef {
   if (!value.startsWith("registry:")) {
-    throw new SpellError(`invalid registry source: ${value} (expected registry:<id>@<version>)`);
+    throw new SpellError(`invalid registry source: ${value} (expected registry:<id> or registry:<id>@<version>)`);
   }
 
   const body = value.slice("registry:".length);
   const atIndex = body.lastIndexOf("@");
+  if (atIndex < 0) {
+    const id = body.trim();
+    if (!id) {
+      throw new SpellError(`invalid registry source: ${value} (expected registry:<id> or registry:<id>@<version>)`);
+    }
+    return { id, version: "latest" };
+  }
+
   if (atIndex <= 0 || atIndex === body.length - 1) {
-    throw new SpellError(`invalid registry source: ${value} (expected registry:<id>@<version>)`);
+    throw new SpellError(`invalid registry source: ${value} (expected registry:<id> or registry:<id>@<version>)`);
   }
 
   const id = body.slice(0, atIndex).trim();
   const version = body.slice(atIndex + 1).trim();
   if (!id || !version) {
-    throw new SpellError(`invalid registry source: ${value} (expected registry:<id>@<version>)`);
+    throw new SpellError(`invalid registry source: ${value} (expected registry:<id> or registry:<id>@<version>)`);
   }
 
   return { id, version };
 }
 
 export function resolveRegistryEntry(index: RegistryIndexV1, id: string, version: string): RegistrySpellEntry {
+  if (version === "latest") {
+    const candidates = index.spells.filter((spell) => spell.id === id);
+    if (candidates.length === 0) {
+      throw new SpellError(`registry entry not found: ${id}@latest`);
+    }
+
+    const versions = Array.from(new Set(candidates.map((spell) => spell.version)));
+    const selectedVersion = selectLatestVersion(versions);
+    const selected = candidates.find((spell) => spell.version === selectedVersion);
+    if (!selected) {
+      throw new SpellError(`registry entry not found: ${id}@latest`);
+    }
+    return selected;
+  }
+
   const found = index.spells.find((spell) => spell.id === id && spell.version === version);
   if (!found) {
     throw new SpellError(`registry entry not found: ${id}@${version}`);
@@ -314,15 +338,19 @@ export async function resolveRegistryInstallSource(sourceInput: string): Promise
 
   const index = await fetchRegistryIndex(defaultIndex.url);
   const entry = resolveRegistryEntry(index, parsed.id, parsed.version);
+  const resolvedRef: RegistryInstallRef = {
+    id: parsed.id,
+    version: entry.version
+  };
   const source = entry.source.trim();
   if (!PINNED_GIT_SOURCE_PATTERN.test(source)) {
     throw new SpellError(
-      `invalid registry source for ${parsed.id}@${parsed.version}: expected '<git-url>#<ref>', got '${entry.source}'`
+      `invalid registry source for ${resolvedRef.id}@${resolvedRef.version}: expected '<git-url>#<ref>', got '${entry.source}'`
     );
   }
 
   const requiredPinsPolicy = readRegistryRequiredPinsPolicy();
-  enforceRegistryRequiredPins(entry, parsed, requiredPinsPolicy);
+  enforceRegistryRequiredPins(entry, resolvedRef, requiredPinsPolicy);
 
   return {
     source,

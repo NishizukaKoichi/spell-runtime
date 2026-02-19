@@ -171,6 +171,47 @@ describe("spell cli integration", () => {
     }
   });
 
+  test("registry install supports implicit latest version resolution", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    const expectedDigest = `sha256:${(await computeBundleDigest(fixture)).valueHex.toUpperCase()}`;
+    const gitRepo = await createBareGitRepoFromSource(fixture);
+    const gitUrl = "https://spell.test/hello-host.git";
+    const gitSource = `${gitUrl}#main`;
+    const indexUrl = "https://registry.test/spell-index.v1.json";
+
+    try {
+      expect(await runCli(["node", "spell", "registry", "set", indexUrl])).toBe(0);
+
+      nock("https://registry.test").get("/spell-index.v1.json").reply(200, {
+        version: "v1",
+        spells: [
+          {
+            id: "fixtures/hello-host",
+            version: "0.9.0",
+            source: gitSource,
+            commit: gitRepo.commit.toUpperCase(),
+            digest: expectedDigest
+          },
+          {
+            id: "fixtures/hello-host",
+            version: "1.0.0",
+            source: gitSource,
+            commit: gitRepo.commit.toUpperCase(),
+            digest: expectedDigest
+          }
+        ]
+      });
+
+      await withGitUrlRewrite(gitUrl, gitRepo.remotePath, async () => {
+        expect(await runCli(["node", "spell", "install", "registry:fixtures/hello-host"])).toBe(0);
+      });
+
+      expect(await runCli(["node", "spell", "inspect", "fixtures/hello-host", "--version", "1.0.0"])).toBe(0);
+    } finally {
+      await rm(gitRepo.tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("registry add/remove/validate lifecycle", async () => {
     const defaultUrl = "https://registry.test/spell-index.v1.json";
     const mirrorUrl = "https://registry-mirror.test/spell-index.v1.json";
@@ -948,6 +989,23 @@ describe("spell cli integration", () => {
     const result = await runCliCapture(["node", "spell", "cast", "fixtures/permissions-guard", "--allow-unsigned"]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("policy denied: effect type 'deploy' mutates target 'github' and mutations are denied");
+  });
+
+  test("policy signature.require_verified blocks --allow-unsigned path", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
+
+    const spellDir = path.join(tempHome, ".spell");
+    await mkdir(spellDir, { recursive: true });
+    await writeFile(
+      path.join(spellDir, "policy.json"),
+      `${JSON.stringify({ version: "v1", default: "allow", signature: { require_verified: true } }, null, 2)}\n`,
+      "utf8"
+    );
+
+    const result = await runCliCapture(["node", "spell", "cast", "fixtures/hello-host", "--allow-unsigned", "-p", "name=world"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("policy denied: signature status 'unsigned' is not allowed (verified required)");
   });
 
   test("permissions guard blocks without connector token", async () => {

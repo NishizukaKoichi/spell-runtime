@@ -111,9 +111,52 @@ describe("install registry index", () => {
     });
   });
 
+  test("parses registry install source with implicit latest", () => {
+    expect(parseRegistryInstallRef("registry:fixtures/hello-host")).toEqual({
+      id: "fixtures/hello-host",
+      version: "latest"
+    });
+    expect(parseRegistryInstallRef("registry:fixtures/hello-host@latest")).toEqual({
+      id: "fixtures/hello-host",
+      version: "latest"
+    });
+  });
+
+  test("resolves latest version by semver order", () => {
+    const index = parseRegistryIndexJson(
+      JSON.stringify({
+        version: "v1",
+        spells: [
+          {
+            id: "fixtures/hello-host",
+            version: "1.2.0",
+            source: "https://spell.test/hello-host.git#v1.2.0"
+          },
+          {
+            id: "fixtures/hello-host",
+            version: "1.10.0",
+            source: "https://spell.test/hello-host.git#v1.10.0"
+          },
+          {
+            id: "fixtures/hello-host",
+            version: "1.3.0",
+            source: "https://spell.test/hello-host.git#v1.3.0"
+          }
+        ]
+      }),
+      "inline"
+    );
+
+    const resolved = resolveRegistryEntry(index, "fixtures/hello-host", "latest");
+    expect(resolved.version).toBe("1.10.0");
+  });
+
   test("rejects malformed registry install source", () => {
-    expect(() => parseRegistryInstallRef("registry:fixtures/hello-host")).toThrow(
-      /expected registry:<id>@<version>/
+    expect(() => parseRegistryInstallRef("registry:@1.0.0")).toThrow(
+      /expected registry:<id> or registry:<id>@<version>/
+    );
+    expect(() => parseRegistryInstallRef("registry:fixtures/hello-host@")).toThrow(
+      /expected registry:<id> or registry:<id>@<version>/
     );
   });
 });
