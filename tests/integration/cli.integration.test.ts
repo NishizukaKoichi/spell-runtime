@@ -570,6 +570,23 @@ describe("spell cli integration", () => {
     expect(result.stderr).toContain("policy denied: default policy is deny");
   });
 
+  test("policy effects deny_mutations blocks cast", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/permissions-guard");
+    expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
+
+    const spellDir = path.join(tempHome, ".spell");
+    await mkdir(spellDir, { recursive: true });
+    await writeFile(
+      path.join(spellDir, "policy.json"),
+      `${JSON.stringify({ version: "v1", default: "allow", effects: { deny_mutations: true } }, null, 2)}\n`,
+      "utf8"
+    );
+
+    const result = await runCliCapture(["node", "spell", "cast", "fixtures/permissions-guard", "--allow-unsigned"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("policy denied: effect type 'deploy' mutates target 'github' and mutations are denied");
+  });
+
   test("permissions guard blocks without connector token", async () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/permissions-guard");
     expect(await runCli(["node", "spell", "install", fixture])).toBe(0);

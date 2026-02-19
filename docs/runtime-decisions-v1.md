@@ -77,3 +77,7 @@ v1 intentionally excludes:
 - `spell policy show` prints current policy JSON or a clear missing-file message (exit 0).
 - `spell policy validate --file <path>` validates with the same runtime parser/validator and prints `policy valid` on success.
 - `spell policy set --file <path>` validates then writes normalized pretty JSON with a trailing newline to `~/.spell/policy.json`.
+- policy `effects` controls are optional and enforce cast preflight using `manifest.effects`:
+  - `allow_types` denies effects whose `type` is not listed.
+  - `deny_types` denies listed effect types and takes precedence over `allow_types`.
+  - `deny_mutations=true` denies any effect where `mutates=true`.

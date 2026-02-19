@@ -80,7 +80,8 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
     const policyDecision = evaluateRuntimePolicy(runtimePolicy, {
       publisher: publisherFromId(manifest.id),
       risk: manifest.risk,
-      execution: manifest.runtime.execution
+      execution: manifest.runtime.execution,
+      effects: manifest.effects
     });
     if (!policyDecision.allow) {
       throw new SpellError(`policy denied: ${policyDecision.reason}`);

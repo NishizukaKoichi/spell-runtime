@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { RuntimeExecution, SpellRisk } from "../types";
+import { RuntimeExecution, SpellEffect, SpellRisk } from "../types";
 import { SpellError } from "../util/errors";
 import { runtimePolicyPath } from "../util/paths";
 
@@ -27,12 +27,18 @@ export interface RuntimePolicyV1 {
   runtime?: {
     allow_execution?: RuntimeExecution[];
   };
+  effects?: {
+    allow_types?: string[];
+    deny_types?: string[];
+    deny_mutations?: boolean;
+  };
 }
 
 export interface RuntimePolicyContext {
   publisher: string;
   risk: SpellRisk;
   execution: RuntimeExecution;
+  effects: SpellEffect[];
 }
 
 export interface RuntimePolicyDecision {
@@ -66,7 +72,7 @@ export function parseRuntimePolicy(raw: unknown): RuntimePolicyV1 {
   }
 
   const obj = raw as Record<string, unknown>;
-  assertOnlyKeys(obj, ["version", "default", "publishers", "max_risk", "runtime"], "policy");
+  assertOnlyKeys(obj, ["version", "default", "publishers", "max_risk", "runtime", "effects"], "policy");
 
   const version = readRequiredString(obj, "version");
   if (version !== POLICY_VERSION) {
@@ -81,13 +87,15 @@ export function parseRuntimePolicy(raw: unknown): RuntimePolicyV1 {
   const publishers = parsePublishers(obj.publishers);
   const maxRisk = parseMaxRisk(obj.max_risk);
   const runtime = parseRuntime(obj.runtime);
+  const effects = parseEffects(obj.effects);
 
   return {
     version: "v1",
     default: defaultDecision as RuntimePolicyV1["default"],
     publishers,
     max_risk: maxRisk,
-    runtime
+    runtime,
+    effects
   };
 }
 
@@ -127,6 +135,32 @@ export function evaluateRuntimePolicy(
     return {
       allow: false,
       reason: `runtime execution '${context.execution}' is not allowed`
+    };
+  }
+
+  const mutatingEffect = policy.effects?.deny_mutations ? context.effects.find((effect) => effect.mutates) : undefined;
+  if (mutatingEffect) {
+    return {
+      allow: false,
+      reason: `effect type '${mutatingEffect.type}' mutates target '${mutatingEffect.target}' and mutations are denied`
+    };
+  }
+
+  const denyTypes = policy.effects?.deny_types;
+  const deniedEffect = denyTypes ? context.effects.find((effect) => denyTypes.includes(effect.type)) : undefined;
+  if (deniedEffect) {
+    return {
+      allow: false,
+      reason: `effect type '${deniedEffect.type}' is denied`
+    };
+  }
+
+  const allowTypes = policy.effects?.allow_types;
+  const notAllowedEffect = allowTypes ? context.effects.find((effect) => !allowTypes.includes(effect.type)) : undefined;
+  if (notAllowedEffect) {
+    return {
+      allow: false,
+      reason: `effect type '${notAllowedEffect.type}' is not allowed`
     };
   }
 
@@ -185,6 +219,24 @@ function parseRuntime(raw: unknown): RuntimePolicyV1["runtime"] | undefined {
   };
 }
 
+function parseEffects(raw: unknown): RuntimePolicyV1["effects"] | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw invalidPolicy("effects must be an object");
+  }
+
+  const obj = raw as Record<string, unknown>;
+  assertOnlyKeys(obj, ["allow_types", "deny_types", "deny_mutations"], "effects");
+
+  return {
+    allow_types: parseStringArray(obj.allow_types, "effects.allow_types"),
+    deny_types: parseStringArray(obj.deny_types, "effects.deny_types"),
+    deny_mutations: parseBoolean(obj.deny_mutations, "effects.deny_mutations")
+  };
+}
+
 function parseStringArray(raw: unknown, label: string): string[] | undefined {
   if (raw === undefined) {
     return undefined;
@@ -213,6 +265,16 @@ function parseExecutionArray(raw: unknown, label: string): RuntimeExecution[] | 
     }
     return value as RuntimeExecution;
   });
+}
+
+function parseBoolean(raw: unknown, label: string): boolean | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (typeof raw !== "boolean") {
+    throw invalidPolicy(`${label} must be a boolean`);
+  }
+  return raw;
 }
 
 function assertOnlyKeys(obj: Record<string, unknown>, allowedKeys: string[], label: string): void {

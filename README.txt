@@ -150,13 +150,21 @@ Policy file format (~/.spell/policy.json):
   "default": "allow",
   "publishers": { "allow": ["samples"], "deny": ["blocked"] },
   "max_risk": "high",
-  "runtime": { "allow_execution": ["host", "docker"] }
+  "runtime": { "allow_execution": ["host", "docker"] },
+  "effects": {
+    "allow_types": ["notify", "deploy"],
+    "deny_types": ["delete"],
+    "deny_mutations": false
+  }
 }
 
 Notes:
 - missing policy file => allow by default
 - invalid policy file => invalid policy: ...
 - policy rejection => policy denied: <reason>
+- effects.deny_mutations=true denies any spell effect with mutates=true
+- effects.allow_types denies any spell effect type not listed
+- effects.deny_types denies listed effect types and takes precedence over effects.allow_types
 
 Policy management commands:
 - spell policy show prints current policy JSON; if missing, it prints a clear message and exits 0.

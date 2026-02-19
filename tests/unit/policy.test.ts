@@ -22,6 +22,11 @@ describe("parseRuntimePolicy", () => {
       max_risk: "high",
       runtime: {
         allow_execution: ["host"]
+      },
+      effects: {
+        allow_types: ["notify"],
+        deny_types: ["delete"],
+        deny_mutations: true
       }
     });
 
@@ -35,6 +40,11 @@ describe("parseRuntimePolicy", () => {
       max_risk: "high",
       runtime: {
         allow_execution: ["host"]
+      },
+      effects: {
+        allow_types: ["notify"],
+        deny_types: ["delete"],
+        deny_mutations: true
       }
     });
   });
@@ -58,7 +68,8 @@ describe("evaluateRuntimePolicy", () => {
   const context = {
     publisher: "fixtures",
     risk: "medium" as const,
-    execution: "host" as const
+    execution: "host" as const,
+    effects: [{ type: "notify", target: "stdout", mutates: false }]
   };
 
   test("allows when policy file is missing", () => {
@@ -148,6 +159,101 @@ describe("evaluateRuntimePolicy", () => {
     expect(evaluateRuntimePolicy(policy, context)).toEqual({
       allow: false,
       reason: "default policy is deny"
+    });
+  });
+
+  test("keeps existing behavior when effects policy is omitted", () => {
+    const policy = parseRuntimePolicy({
+      version: "v1",
+      default: "allow"
+    });
+
+    expect(
+      evaluateRuntimePolicy(policy, {
+        ...context,
+        effects: [{ type: "deploy", target: "remote", mutates: true }]
+      })
+    ).toEqual({ allow: true });
+  });
+
+  test("denies mutating effects when deny_mutations is true", () => {
+    const policy = parseRuntimePolicy({
+      version: "v1",
+      default: "allow",
+      effects: {
+        deny_mutations: true
+      }
+    });
+
+    expect(
+      evaluateRuntimePolicy(policy, {
+        ...context,
+        effects: [{ type: "deploy", target: "remote", mutates: true }]
+      })
+    ).toEqual({
+      allow: false,
+      reason: "effect type 'deploy' mutates target 'remote' and mutations are denied"
+    });
+  });
+
+  test("denies effect types in deny_types", () => {
+    const policy = parseRuntimePolicy({
+      version: "v1",
+      default: "allow",
+      effects: {
+        deny_types: ["delete", "deploy"]
+      }
+    });
+
+    expect(
+      evaluateRuntimePolicy(policy, {
+        ...context,
+        effects: [{ type: "deploy", target: "remote", mutates: false }]
+      })
+    ).toEqual({
+      allow: false,
+      reason: "effect type 'deploy' is denied"
+    });
+  });
+
+  test("denies effect types not included in allow_types", () => {
+    const policy = parseRuntimePolicy({
+      version: "v1",
+      default: "allow",
+      effects: {
+        allow_types: ["notify"]
+      }
+    });
+
+    expect(
+      evaluateRuntimePolicy(policy, {
+        ...context,
+        effects: [{ type: "deploy", target: "remote", mutates: false }]
+      })
+    ).toEqual({
+      allow: false,
+      reason: "effect type 'deploy' is not allowed"
+    });
+  });
+
+  test("deny_types takes precedence over allow_types", () => {
+    const policy = parseRuntimePolicy({
+      version: "v1",
+      default: "allow",
+      effects: {
+        allow_types: ["deploy"],
+        deny_types: ["deploy"]
+      }
+    });
+
+    expect(
+      evaluateRuntimePolicy(policy, {
+        ...context,
+        effects: [{ type: "deploy", target: "remote", mutates: false }]
+      })
+    ).toEqual({
+      allow: false,
+      reason: "effect type 'deploy' is denied"
     });
   });
 });
