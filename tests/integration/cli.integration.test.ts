@@ -67,6 +67,34 @@ describe("spell cli integration", () => {
     expect(Number.isNaN(Date.parse(String(sourceMetadata.installed_at)))).toBe(false);
   });
 
+  test("get-output reads one value from execution log", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
+
+    const castResult = await runCliCapture([
+      "node",
+      "spell",
+      "cast",
+      "fixtures/hello-host",
+      "--allow-unsigned",
+      "-p",
+      "name=world"
+    ]);
+    expect(castResult.code).toBe(0);
+
+    const executionMatch = /execution_id:\s*(.+)/.exec(castResult.stdout);
+    expect(executionMatch?.[1]).toBeTruthy();
+    const executionId = String(executionMatch?.[1]).trim();
+
+    const outputResult = await runCliCapture(["node", "spell", "get-output", executionId, "step.hello.stdout"]);
+    expect(outputResult.code).toBe(0);
+    expect(outputResult.stdout).toContain("hello");
+
+    const missingOutput = await runCliCapture(["node", "spell", "get-output", executionId, "step.hello.stdout.missing"]);
+    expect(missingOutput.code).toBe(1);
+    expect(missingOutput.stderr).toContain("stdout reference does not support nested path");
+  });
+
   test("install supports git https sources", async () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
     const gitRepo = await createBareGitRepoFromSource(fixture);

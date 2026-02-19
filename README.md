@@ -72,6 +72,7 @@ npm run smoke:npx
 - `spell trust remove-key <publisher> --key-id <id>`
 - `spell trust remove <publisher>`
 - `spell log <execution-id>`
+- `spell get-output <execution-id> <path>`
 
 ## Install Sources
 
@@ -488,11 +489,12 @@ By default it listens on `:8787` and reads:
   - `GET /` (minimal Receipts UI)
   - `GET /ui/app.js` (UI client script)
   - `GET /api/buttons` (includes `allowed_tenants` for each button; `null` when unrestricted)
-  - `GET /api/spell-executions` (`status`, `button_id`, `tenant_id`, `limit` query supported)
-  - `POST /api/spell-executions` (supports optional `Idempotency-Key` header)
-  - `GET /api/spell-executions/:execution_id`
-  - `POST /api/spell-executions/:execution_id/cancel`
-  - `POST /api/spell-executions/:execution_id/retry`
+- `GET /api/spell-executions` (`status`, `button_id`, `tenant_id`, `limit` query supported)
+- `POST /api/spell-executions` (supports optional `Idempotency-Key` header)
+- `GET /api/spell-executions/:execution_id`
+- `GET /api/spell-executions/:execution_id/output?path=step.<name>.(stdout|json[.dot.path])`
+- `POST /api/spell-executions/:execution_id/cancel`
+- `POST /api/spell-executions/:execution_id/retry`
   - `GET /api/tenants/:tenant_id/usage`
 
 Optional environment variables:

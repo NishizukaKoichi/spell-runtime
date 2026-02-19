@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash, createPublicKey } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Command } from "commander";
 import { installBundle } from "../bundle/install";
@@ -26,7 +26,7 @@ import {
   upsertTrustedPublisherKey
 } from "../signature/trustStore";
 import { SpellError } from "../util/errors";
-import { logsRoot } from "../util/paths";
+import { readExecutionLogJson, readExecutionLogRaw, readOutputFromExecutionLog } from "../logging/readExecutionLog";
 
 export async function runCli(argv: string[] = process.argv): Promise<number> {
   const program = new Command();
@@ -506,17 +506,25 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
     .description("Show execution log")
     .argument("<execution-id>", "Execution log file name")
     .action(async (executionId: string) => {
-      const fileName = executionId.endsWith(".json") ? executionId : `${executionId}.json`;
-      const filePath = path.join(logsRoot(), fileName);
+      const raw = await readExecutionLogRaw(executionId);
+      process.stdout.write(raw.endsWith("\n") ? raw : `${raw}\n`);
+    });
 
-      let raw: string;
-      try {
-        raw = await readFile(filePath, "utf8");
-      } catch {
-        throw new SpellError(`log not found: ${executionId}`);
+  program
+    .command("get-output")
+    .description("Read one output value from an execution log")
+    .argument("<execution-id>", "Execution id (with or without .json)")
+    .argument("<path>", "Output reference (e.g. step.send.json.data.id)")
+    .action(async (executionId: string, outputPath: string) => {
+      const log = await readExecutionLogJson(executionId);
+      const value = readOutputFromExecutionLog(log, outputPath);
+
+      if (typeof value === "string") {
+        process.stdout.write(value.endsWith("\n") ? value : `${value}\n`);
+        return;
       }
 
-      process.stdout.write(raw.endsWith("\n") ? raw : `${raw}\n`);
+      process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
     });
 
   try {

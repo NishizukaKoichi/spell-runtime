@@ -6,6 +6,7 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { loadButtonRegistryFromFile, resolveButtonEntry, type ButtonRegistryV1 } from "../contract/buttonRegistry";
 import { ensureSpellDirs, logsRoot } from "../util/paths";
+import { resolveOutputReference } from "../util/outputs";
 import { renderReceiptsClientJs, renderReceiptsHtml } from "./ui";
 
 export interface ExecutionApiServerOptions {
@@ -696,6 +697,82 @@ export async function startExecutionApiServer(
         });
       }
 
+      if (method === "GET" && route.startsWith("/spell-executions/") && route.endsWith("/output")) {
+        const matched = /^\/spell-executions\/([^/]+)\/output$/.exec(route);
+        const executionId = matched && matched[1] ? matched[1].trim() : "";
+        if (!executionId || !/^[a-zA-Z0-9_.-]+$/.test(executionId)) {
+          return sendJson(res, 400, { ok: false, error_code: "INVALID_EXECUTION_ID", message: "invalid execution id" });
+        }
+
+        const outputPath = String(url.searchParams.get("path") ?? "").trim();
+        if (!outputPath) {
+          return sendJson(res, 400, {
+            ok: false,
+            error_code: "INVALID_QUERY",
+            message: "path query is required"
+          });
+        }
+
+        const job = jobs.get(executionId);
+        if (!job) {
+          return sendJson(res, 404, { ok: false, error_code: "EXECUTION_NOT_FOUND", message: "execution not found" });
+        }
+
+        if (authKeys.length > 0 && authContext.ok && authContext.role !== "admin" && authContext.tenantId !== job.tenant_id) {
+          return sendJson(res, 403, {
+            ok: false,
+            error_code: "TENANT_FORBIDDEN",
+            message: `tenant output denied: ${job.tenant_id}`
+          });
+        }
+
+        if (!job.runtime_log_path) {
+          return sendJson(res, 409, {
+            ok: false,
+            error_code: "EXECUTION_NOT_READY",
+            message: "execution log is not available yet"
+          });
+        }
+
+        try {
+          const value = await readOutputValueFromRuntimeLog(job.runtime_log_path, outputPath);
+          return sendJson(res, 200, {
+            ok: true,
+            execution_id: job.execution_id,
+            path: outputPath,
+            value
+          });
+        } catch (error) {
+          const message = (error as Error).message;
+          if (message.startsWith("invalid output reference:") || message.startsWith("stdout reference does not support")) {
+            return sendJson(res, 400, {
+              ok: false,
+              error_code: "INVALID_OUTPUT_PATH",
+              message
+            });
+          }
+          if (
+            message.startsWith("output reference not found:") ||
+            message.startsWith("output value not found:") ||
+            message === "execution log has no outputs"
+          ) {
+            return sendJson(res, 404, {
+              ok: false,
+              error_code: "OUTPUT_NOT_FOUND",
+              message
+            });
+          }
+          if (message === "execution log not found") {
+            return sendJson(res, 404, {
+              ok: false,
+              error_code: "EXECUTION_LOG_NOT_FOUND",
+              message
+            });
+          }
+          throw error;
+        }
+      }
+
       if (method === "GET" && route.startsWith("/spell-executions/")) {
         const executionId = route.slice("/spell-executions/".length);
         if (!executionId || !/^[a-zA-Z0-9_.-]+$/.test(executionId)) {
@@ -960,6 +1037,38 @@ async function loadSanitizedReceipt(runtimeLogPath: string): Promise<Record<stri
     success: parsed.success,
     error: parsed.error
   };
+}
+
+async function readOutputValueFromRuntimeLog(runtimeLogPath: string, outputRef: string): Promise<unknown> {
+  let raw: string;
+  try {
+    raw = await readFile(runtimeLogPath, "utf8");
+  } catch {
+    throw new Error("execution log not found");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("execution log is invalid json");
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("execution log is invalid json");
+  }
+
+  const outputs = (parsed as Record<string, unknown>).outputs;
+  if (!outputs || typeof outputs !== "object" || Array.isArray(outputs)) {
+    throw new Error("execution log has no outputs");
+  }
+
+  const value = resolveOutputReference(outputs as Record<string, unknown>, outputRef);
+  if (value === undefined) {
+    throw new Error(`output value not found: ${outputRef}`);
+  }
+
+  return value;
 }
 
 function mapRuntimeError(raw: string): { code: string; message: string } {

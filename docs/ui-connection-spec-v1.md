@@ -62,6 +62,7 @@ See sample:
 - `GET /api/buttons`
 - `GET /api/spell-executions` (query: `status`, `button_id`, `tenant_id`, `limit`)
 - `GET /api/spell-executions/:execution_id`
+- `GET /api/spell-executions/:execution_id/output?path=step.<name>.(stdout|json[.dot.path])`
 - `POST /api/spell-executions/:execution_id/cancel`
 - `POST /api/spell-executions/:execution_id/retry`
 - `GET /` (minimal receipts UI)
@@ -140,6 +141,23 @@ Execution status values:
 - `failed`
 - `timeout`
 - `canceled`
+
+## 6.2.1 GET /api/spell-executions/:execution_id/output
+Returns one resolved output value from the runtime log.
+
+Query:
+- `path` (required): output reference
+  - `step.<stepName>.stdout`
+  - `step.<stepName>.json`
+  - `step.<stepName>.json.<dot.path>`
+
+Errors:
+- `400 INVALID_QUERY` when `path` is missing
+- `400 INVALID_OUTPUT_PATH` when `path` format is invalid
+- `404 OUTPUT_NOT_FOUND` when output/path is not present
+- `404 EXECUTION_NOT_FOUND` when execution does not exist
+- `409 EXECUTION_NOT_READY` when execution has no runtime log yet
+- `403 TENANT_FORBIDDEN` for cross-tenant access when auth keys are enabled
 
 ## 6.3 POST /api/spell-executions/:execution_id/cancel
 Cancels queued/running executions.

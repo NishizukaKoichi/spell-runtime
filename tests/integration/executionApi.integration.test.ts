@@ -201,6 +201,51 @@ describe("execution api integration", () => {
     }
   });
 
+  test("GET /api/spell-executions/:execution_id/output returns one output value", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json")
+    });
+
+    try {
+      const executionId = await createExecution(server.port, {
+        button_id: "publish_site_high_risk",
+        actor_role: "admin",
+        confirmation: { risk_acknowledged: true }
+      });
+      await waitForExecution(server.port, executionId);
+
+      const output = await fetch(
+        `http://127.0.0.1:${server.port}/api/spell-executions/${executionId}/output?path=step.publish.stdout`
+      );
+      expect(output.status).toBe(200);
+      const outputPayload = (await output.json()) as {
+        execution_id: string;
+        path: string;
+        value: unknown;
+      };
+      expect(outputPayload.execution_id).toBe(executionId);
+      expect(outputPayload.path).toBe("step.publish.stdout");
+      expect(String(outputPayload.value)).toContain("publish simulated");
+
+      const invalidPath = await fetch(
+        `http://127.0.0.1:${server.port}/api/spell-executions/${executionId}/output?path=bad-reference`
+      );
+      expect(invalidPath.status).toBe(400);
+      const invalidPayload = (await invalidPath.json()) as Record<string, unknown>;
+      expect(invalidPayload.error_code).toBe("INVALID_OUTPUT_PATH");
+
+      const missingOutput = await fetch(
+        `http://127.0.0.1:${server.port}/api/spell-executions/${executionId}/output?path=step.publish.json.value`
+      );
+      expect(missingOutput.status).toBe(404);
+      const missingPayload = (await missingOutput.json()) as Record<string, unknown>;
+      expect(missingPayload.error_code).toBe("OUTPUT_NOT_FOUND");
+    } finally {
+      await server.close();
+    }
+  });
+
   test("POST /api/spell-executions/:execution_id/cancel cancels queued executions", async () => {
     const server = await startExecutionApiServer({
       port: 0,
@@ -466,6 +511,44 @@ describe("execution api integration", () => {
         method: "POST",
         headers: { authorization: "Bearer team-a-op-token" }
       });
+      expect(forbidden.status).toBe(403);
+      const forbiddenPayload = (await forbidden.json()) as Record<string, unknown>;
+      expect(forbiddenPayload.error_code).toBe("TENANT_FORBIDDEN");
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("GET /api/spell-executions/:execution_id/output forbids non-admin cross-tenant access with auth keys", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json"),
+      authKeys: ["team_a:operator=team-a-op-token", "team_b:admin=team-b-admin-token"]
+    });
+
+    try {
+      const created = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-b-admin-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "publish_site_high_risk",
+          actor_role: "admin",
+          confirmation: {
+            risk_acknowledged: true
+          }
+        })
+      });
+      expect(created.status).toBe(202);
+      const createdPayload = (await created.json()) as Record<string, unknown>;
+      const executionId = String(createdPayload.execution_id);
+      await waitForExecution(server.port, executionId, "team-b-admin-token");
+
+      const forbidden = await fetch(
+        `http://127.0.0.1:${server.port}/api/spell-executions/${executionId}/output?path=step.publish.stdout`,
+        {
+          headers: { authorization: "Bearer team-a-op-token" }
+        }
+      );
       expect(forbidden.status).toBe(403);
       const forbiddenPayload = (await forbidden.json()) as Record<string, unknown>;
       expect(forbiddenPayload.error_code).toBe("TENANT_FORBIDDEN");

@@ -88,3 +88,14 @@ v1 intentionally excludes:
   - `allow_types` denies effects whose `type` is not listed.
   - `deny_types` denies listed effect types and takes precedence over `allow_types`.
   - `deny_mutations=true` denies any effect where `mutates=true`.
+
+## 14. Output retrieval surfaces
+- operators can read one output value from logs via:
+  - `spell get-output <execution-id> <path>`
+- execution API supports:
+  - `GET /api/spell-executions/:execution_id/output?path=...`
+- output path grammar is fixed to existing runtime references:
+  - `step.<stepName>.stdout`
+  - `step.<stepName>.json`
+  - `step.<stepName>.json.<dot.path>`
+- API output reads remain tenant-scoped under auth keys (`TENANT_FORBIDDEN` for cross-tenant non-admin access).

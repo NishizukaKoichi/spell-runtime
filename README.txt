@@ -59,6 +59,7 @@ Manual npx (local package):
 - spell trust remove-key <publisher> --key-id <id>
 - spell trust remove <publisher>
 - spell log <execution-id>
+- spell get-output <execution-id> <path>
 
 2.1 Install sources
 - spell install <source> accepts:
