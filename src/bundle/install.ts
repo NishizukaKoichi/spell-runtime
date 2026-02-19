@@ -18,7 +18,7 @@ import { toIdKey } from "../util/idKey";
 import { ensureSpellDirs, spellsRoot } from "../util/paths";
 import { SpellError } from "../util/errors";
 import { loadManifestFromDir } from "./manifest";
-import { resolveRegistryInstallSource } from "./registry";
+import { resolveRegistryInstallSource, type RegistryInstallSource } from "./registry";
 import { computeBundleDigest } from "../signature/bundleDigest";
 
 export interface InstallResult {
@@ -29,7 +29,7 @@ export interface InstallResult {
 }
 
 export async function installBundle(sourceInput: string): Promise<InstallResult> {
-  const registrySource = isRegistrySource(sourceInput) ? await resolveRegistryInstallSource(sourceInput) : undefined;
+  const registrySource = await resolveRegistrySourceIfNeeded(sourceInput);
   const resolvedInput = registrySource?.source ?? sourceInput;
   const source = await resolveInstallSource(resolvedInput, {
     expectedRegistryCommit: registrySource?.expectedCommit
@@ -42,6 +42,14 @@ export async function installBundle(sourceInput: string): Promise<InstallResult>
   } finally {
     await source.cleanup();
   }
+}
+
+async function resolveRegistrySourceIfNeeded(sourceInput: string): Promise<RegistryInstallSource | undefined> {
+  if (!isRegistrySource(sourceInput)) {
+    return undefined;
+  }
+
+  return resolveRegistryInstallSource(sourceInput);
 }
 
 type InstallProvenance = LocalInstallProvenance | GitInstallProvenance;

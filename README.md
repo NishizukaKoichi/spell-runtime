@@ -84,12 +84,24 @@ Git sources must include `#<ref>`. If omitted, install fails with:
 
 When a git source is provided, runtime clones the repository, checks out the requested ref, resolves the checked-out commit SHA (`git rev-parse HEAD`), and installs from that checkout.
 
-For registry installs, each index entry may include optional pins:
+For registry installs, each index entry may include pins:
 
 - `commit` (40-char SHA-1): compares cloned `HEAD` commit (case-insensitive).
 - `digest` (`sha256:<64-hex>`): compares canonical bundle digest from the resolved source root (case-insensitive).
 
-When present, mismatch fails with:
+Required pin policy is controlled by `SPELL_REGISTRY_REQUIRED_PINS`:
+
+- `none`: do not require `commit`/`digest` presence.
+- `commit`: require `commit`.
+- `digest`: require `digest`.
+- `both`: require both `commit` and `digest` (default).
+
+When a required pin is missing, install fails with:
+
+- `registry entry missing required commit pin for <id>@<version>`
+- `registry entry missing required digest pin for <id>@<version>`
+
+When present, mismatch still fails with:
 
 - `registry commit mismatch: expected <expected>, got <actual>`
 - `registry digest mismatch: expected <expected>, got <actual>`

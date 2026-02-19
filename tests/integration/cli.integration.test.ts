@@ -24,6 +24,7 @@ describe("spell cli integration", () => {
     delete process.env.SPELL_RUNTIME_INPUT_MAX_BYTES;
     delete process.env.SPELL_RUNTIME_STEP_TIMEOUT_MS;
     delete process.env.SPELL_RUNTIME_EXECUTION_TIMEOUT_MS;
+    delete process.env.SPELL_REGISTRY_REQUIRED_PINS;
   });
 
   afterEach(async () => {
@@ -37,6 +38,7 @@ describe("spell cli integration", () => {
     delete process.env.SPELL_RUNTIME_INPUT_MAX_BYTES;
     delete process.env.SPELL_RUNTIME_STEP_TIMEOUT_MS;
     delete process.env.SPELL_RUNTIME_EXECUTION_TIMEOUT_MS;
+    delete process.env.SPELL_REGISTRY_REQUIRED_PINS;
     await rm(tempHome, { recursive: true, force: true });
   });
 
@@ -155,6 +157,146 @@ describe("spell cli integration", () => {
     expect(result.stderr).toContain("registry entry not found: fixtures/hello-host@1.0.0");
   });
 
+  test("registry install defaults to requiring both pins", async () => {
+    const indexUrl = "https://registry.test/spell-index.v1.json";
+    delete process.env.SPELL_REGISTRY_REQUIRED_PINS;
+    expect(await runCli(["node", "spell", "registry", "set", indexUrl])).toBe(0);
+
+    nock("https://registry.test").get("/spell-index.v1.json").reply(200, {
+      version: "v1",
+      spells: [
+        {
+          id: "fixtures/hello-host",
+          version: "1.0.0",
+          source: "https://spell.test/hello-host.git#main",
+          commit: "0000000000000000000000000000000000000000"
+        }
+      ]
+    });
+
+    const result = await runCliCapture(["node", "spell", "install", "registry:fixtures/hello-host@1.0.0"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("registry entry missing required digest pin for fixtures/hello-host@1.0.0");
+  });
+
+  test("registry install requires commit pin when SPELL_REGISTRY_REQUIRED_PINS=commit", async () => {
+    const indexUrl = "https://registry.test/spell-index.v1.json";
+    process.env.SPELL_REGISTRY_REQUIRED_PINS = "commit";
+    expect(await runCli(["node", "spell", "registry", "set", indexUrl])).toBe(0);
+
+    nock("https://registry.test").get("/spell-index.v1.json").reply(200, {
+      version: "v1",
+      spells: [
+        {
+          id: "fixtures/hello-host",
+          version: "1.0.0",
+          source: "https://spell.test/hello-host.git#main",
+          digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ]
+    });
+
+    const result = await runCliCapture(["node", "spell", "install", "registry:fixtures/hello-host@1.0.0"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("registry entry missing required commit pin for fixtures/hello-host@1.0.0");
+  });
+
+  test("registry install requires digest pin when SPELL_REGISTRY_REQUIRED_PINS=digest", async () => {
+    const indexUrl = "https://registry.test/spell-index.v1.json";
+    process.env.SPELL_REGISTRY_REQUIRED_PINS = "digest";
+    expect(await runCli(["node", "spell", "registry", "set", indexUrl])).toBe(0);
+
+    nock("https://registry.test").get("/spell-index.v1.json").reply(200, {
+      version: "v1",
+      spells: [
+        {
+          id: "fixtures/hello-host",
+          version: "1.0.0",
+          source: "https://spell.test/hello-host.git#main",
+          commit: "0000000000000000000000000000000000000000"
+        }
+      ]
+    });
+
+    const result = await runCliCapture(["node", "spell", "install", "registry:fixtures/hello-host@1.0.0"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("registry entry missing required digest pin for fixtures/hello-host@1.0.0");
+  });
+
+  test("registry install allows missing pins when SPELL_REGISTRY_REQUIRED_PINS=none", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    const gitRepo = await createBareGitRepoFromSource(fixture);
+    const gitUrl = "https://spell.test/hello-host.git";
+    const gitSource = `${gitUrl}#main`;
+    const indexUrl = "https://registry.test/spell-index.v1.json";
+    process.env.SPELL_REGISTRY_REQUIRED_PINS = "none";
+
+    try {
+      expect(await runCli(["node", "spell", "registry", "set", indexUrl])).toBe(0);
+
+      nock("https://registry.test").get("/spell-index.v1.json").reply(200, {
+        version: "v1",
+        spells: [
+          {
+            id: "fixtures/hello-host",
+            version: "1.0.0",
+            source: gitSource
+          }
+        ]
+      });
+
+      await withGitUrlRewrite(gitUrl, gitRepo.remotePath, async () => {
+        expect(await runCli(["node", "spell", "install", "registry:fixtures/hello-host@1.0.0"])).toBe(0);
+      });
+    } finally {
+      await rm(gitRepo.tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("registry install requires both pins when SPELL_REGISTRY_REQUIRED_PINS=both", async () => {
+    const indexUrl = "https://registry.test/spell-index.v1.json";
+    process.env.SPELL_REGISTRY_REQUIRED_PINS = "both";
+    expect(await runCli(["node", "spell", "registry", "set", indexUrl])).toBe(0);
+
+    nock("https://registry.test").get("/spell-index.v1.json").reply(200, {
+      version: "v1",
+      spells: [
+        {
+          id: "fixtures/hello-host",
+          version: "1.0.0",
+          source: "https://spell.test/hello-host.git#main",
+          digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ]
+    });
+
+    const result = await runCliCapture(["node", "spell", "install", "registry:fixtures/hello-host@1.0.0"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("registry entry missing required commit pin for fixtures/hello-host@1.0.0");
+  });
+
+  test("non-registry local installs ignore SPELL_REGISTRY_REQUIRED_PINS", async () => {
+    process.env.SPELL_REGISTRY_REQUIRED_PINS = "invalid";
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
+  });
+
+  test("non-registry git installs ignore SPELL_REGISTRY_REQUIRED_PINS", async () => {
+    process.env.SPELL_REGISTRY_REQUIRED_PINS = "invalid";
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    const gitRepo = await createBareGitRepoFromSource(fixture);
+    const gitUrl = "https://spell.test/hello-host.git";
+    const gitSource = `${gitUrl}#main`;
+
+    try {
+      await withGitUrlRewrite(gitUrl, gitRepo.remotePath, async () => {
+        expect(await runCli(["node", "spell", "install", gitSource])).toBe(0);
+      });
+    } finally {
+      await rm(gitRepo.tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("registry install fails when commit pin does not match cloned HEAD", async () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
     const gitRepo = await createBareGitRepoFromSource(fixture);
@@ -173,7 +315,8 @@ describe("spell cli integration", () => {
             id: "fixtures/hello-host",
             version: "1.0.0",
             source: gitSource,
-            commit: expectedCommit
+            commit: expectedCommit,
+            digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           }
         ]
       });
@@ -207,6 +350,7 @@ describe("spell cli integration", () => {
             id: "fixtures/hello-host",
             version: "1.0.0",
             source: gitSource,
+            commit: gitRepo.commit,
             digest: expectedDigest
           }
         ]

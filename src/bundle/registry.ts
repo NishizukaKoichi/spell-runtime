@@ -38,7 +38,11 @@ export interface RegistryInstallSource {
   expectedDigest?: string;
 }
 
+export type RegistryRequiredPinsPolicy = "none" | "commit" | "digest" | "both";
+
 const ajv = new Ajv2020({ allErrors: true, strict: false });
+const REGISTRY_REQUIRED_PINS_ENV = "SPELL_REGISTRY_REQUIRED_PINS";
+export const DEFAULT_REGISTRY_REQUIRED_PINS: RegistryRequiredPinsPolicy = "both";
 
 const registryConfigSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -189,6 +193,44 @@ export function resolveRegistryEntry(index: RegistryIndexV1, id: string, version
   return found;
 }
 
+export function readRegistryRequiredPinsPolicy(
+  env: NodeJS.ProcessEnv = process.env
+): RegistryRequiredPinsPolicy {
+  const raw = env[REGISTRY_REQUIRED_PINS_ENV];
+  if (raw === undefined || raw.trim() === "") {
+    return DEFAULT_REGISTRY_REQUIRED_PINS;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  switch (normalized) {
+    case "none":
+    case "commit":
+    case "digest":
+    case "both":
+      return normalized;
+    default:
+      throw new SpellError(`${REGISTRY_REQUIRED_PINS_ENV} must be one of: none, commit, digest, both`);
+  }
+}
+
+export function enforceRegistryRequiredPins(
+  entry: RegistrySpellEntry,
+  installRef: RegistryInstallRef,
+  policy: RegistryRequiredPinsPolicy
+): void {
+  if ((policy === "commit" || policy === "both") && !entry.commit) {
+    throw new SpellError(
+      `registry entry missing required commit pin for ${installRef.id}@${installRef.version}`
+    );
+  }
+
+  if ((policy === "digest" || policy === "both") && !entry.digest) {
+    throw new SpellError(
+      `registry entry missing required digest pin for ${installRef.id}@${installRef.version}`
+    );
+  }
+}
+
 export async function resolveRegistryInstallSource(sourceInput: string): Promise<RegistryInstallSource> {
   const parsed = parseRegistryInstallRef(sourceInput);
   const config = await readRegistryConfig();
@@ -205,6 +247,9 @@ export async function resolveRegistryInstallSource(sourceInput: string): Promise
       `invalid registry source for ${parsed.id}@${parsed.version}: expected '<git-url>#<ref>', got '${entry.source}'`
     );
   }
+
+  const requiredPinsPolicy = readRegistryRequiredPinsPolicy();
+  enforceRegistryRequiredPins(entry, parsed, requiredPinsPolicy);
 
   return {
     source,
