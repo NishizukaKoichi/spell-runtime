@@ -492,6 +492,7 @@ By default it listens on `:8787` and reads:
   - `POST /api/spell-executions` (supports optional `Idempotency-Key` header)
   - `GET /api/spell-executions/:execution_id`
   - `POST /api/spell-executions/:execution_id/cancel`
+  - `POST /api/spell-executions/:execution_id/retry`
   - `GET /api/tenants/:tenant_id/usage`
 
 Optional environment variables:
@@ -519,8 +520,11 @@ Security note:
 - idempotency scope is `tenant_id + idempotency_key`; replay with same effective request returns existing execution with `idempotent_replay: true`
 - reuse of the same idempotency key with a different effective request returns `409 IDEMPOTENCY_CONFLICT`
 - `POST /api/spell-executions/:execution_id/cancel` marks queued/running jobs as `canceled`; terminal states (`succeeded`/`failed`/`timeout`/`canceled`) return `409 ALREADY_TERMINAL`
+- `POST /api/spell-executions/:execution_id/retry` allows retrying only `failed`/`timeout`/`canceled` executions; other states return `409 NOT_RETRYABLE`
+- retry creates a new `execution_id` and links executions via `retry_of` (new execution) and `retried_by` (source execution); list/detail payloads include both fields
 - when auth is enabled, pass `Authorization: Bearer <token>` (or `x-api-key`) for `/api` routes
 - with `SPELL_API_AUTH_KEYS`, non-admin list requests are restricted to their own tenant and cross-tenant `tenant_id` filters return `403` (`TENANT_FORBIDDEN`)
 - with `SPELL_API_AUTH_KEYS`, non-admin cancel requests are restricted to their own tenant (`403 TENANT_FORBIDDEN` for cross-tenant)
+- with `SPELL_API_AUTH_KEYS`, non-admin retry requests are restricted to their own tenant (`403 TENANT_FORBIDDEN` for cross-tenant)
 - with `SPELL_API_AUTH_KEYS`, `GET /api/tenants/:tenant_id/usage` requires an `admin` key
 - do not set both `SPELL_API_AUTH_KEYS` and `SPELL_API_AUTH_TOKENS` at the same time

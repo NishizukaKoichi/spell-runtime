@@ -55,6 +55,18 @@ interface ExecutionJob {
   receipt?: Record<string, unknown>;
   idempotency_key?: string;
   idempotency_fingerprint?: string;
+  request?: ExecutionRequestSnapshot;
+  retry_of?: string;
+  retried_by?: string;
+}
+
+interface ExecutionRequestSnapshot {
+  input: Record<string, unknown>;
+  dry_run: boolean;
+  confirmation: {
+    risk_acknowledged: boolean;
+    billing_acknowledged: boolean;
+  };
 }
 
 interface ExecutionRuntimeState {
@@ -206,6 +218,95 @@ export async function startExecutionApiServer(
         }
       }
 
+      const checkSubmissionLimits = (tenantId: string): { statusCode: number; payload: Record<string, unknown> } | null => {
+        if (countInFlightJobs(jobs) >= maxConcurrentExecutions) {
+          return {
+            statusCode: 429,
+            payload: {
+              ok: false,
+              error_code: "CONCURRENCY_LIMITED",
+              message: `too many in-flight executions: max ${maxConcurrentExecutions}`
+            }
+          };
+        }
+
+        if (countInFlightJobsForTenant(jobs, tenantId) >= tenantMaxConcurrentExecutions) {
+          return {
+            statusCode: 429,
+            payload: {
+              ok: false,
+              error_code: "TENANT_CONCURRENCY_LIMITED",
+              message: `too many in-flight executions for tenant ${tenantId}: max ${tenantMaxConcurrentExecutions}`
+            }
+          };
+        }
+
+        const ip = req.socket.remoteAddress ?? "unknown";
+        if (!allowRate(ip, postHistoryByIp, rateWindowMs, rateMaxRequests)) {
+          return {
+            statusCode: 429,
+            payload: {
+              ok: false,
+              error_code: "RATE_LIMITED",
+              message: "too many requests"
+            }
+          };
+        }
+
+        if (!allowRate(tenantId, postHistoryByTenant, tenantRateWindowMs, tenantRateMaxRequests)) {
+          return {
+            statusCode: 429,
+            payload: {
+              ok: false,
+              error_code: "TENANT_RATE_LIMITED",
+              message: `too many requests for tenant ${tenantId}`
+            }
+          };
+        }
+
+        return null;
+      };
+
+      const startJobRunner = (job: ExecutionJob): void => {
+        if (!job.request) {
+          throw new Error(`execution request snapshot missing: ${job.execution_id}`);
+        }
+
+        let runningJob: Promise<void>;
+        runningJob = runJob(
+          job,
+          cloneExecutionInput(job.request.input),
+          job.request.dry_run,
+          {
+            risk: job.request.confirmation.risk_acknowledged,
+            billing: job.request.confirmation.billing_acknowledged
+          },
+          job.require_signature,
+          executionTimeoutMs,
+          jobs,
+          runtimeStateByExecutionId,
+          persistJobs,
+          appendTenantAudit,
+          {
+            logsDirectory,
+            logRetentionDays,
+            logMaxFiles
+          }
+        )
+          .catch(() => undefined)
+          .finally(() => {
+            runningJobPromises.delete(runningJob);
+          });
+        runningJobPromises.add(runningJob);
+      };
+
+      const queueExecutionJob = async (job: ExecutionJob): Promise<void> => {
+        jobs.set(job.execution_id, job);
+        await persistJobs();
+        await appendTenantAudit(job).catch(() => undefined);
+        startJobRunner(job);
+      };
+
       if (method === "POST" && route === "/spell-executions") {
         const tenantId = authContext.ok ? authContext.tenantId : DEFAULT_TENANT_ID;
         const parsedIdempotencyKey = parseIdempotencyKey(req.headers["idempotency-key"]);
@@ -218,57 +319,8 @@ export async function startExecutionApiServer(
         }
         const idempotencyKey = parsedIdempotencyKey.key;
 
-        const checkSubmissionLimits = (): { statusCode: number; payload: Record<string, unknown> } | null => {
-          if (countInFlightJobs(jobs) >= maxConcurrentExecutions) {
-            return {
-              statusCode: 429,
-              payload: {
-                ok: false,
-                error_code: "CONCURRENCY_LIMITED",
-                message: `too many in-flight executions: max ${maxConcurrentExecutions}`
-              }
-            };
-          }
-
-          if (countInFlightJobsForTenant(jobs, tenantId) >= tenantMaxConcurrentExecutions) {
-            return {
-              statusCode: 429,
-              payload: {
-                ok: false,
-                error_code: "TENANT_CONCURRENCY_LIMITED",
-                message: `too many in-flight executions for tenant ${tenantId}: max ${tenantMaxConcurrentExecutions}`
-              }
-            };
-          }
-
-          const ip = req.socket.remoteAddress ?? "unknown";
-          if (!allowRate(ip, postHistoryByIp, rateWindowMs, rateMaxRequests)) {
-            return {
-              statusCode: 429,
-              payload: {
-                ok: false,
-                error_code: "RATE_LIMITED",
-                message: "too many requests"
-              }
-            };
-          }
-
-          if (!allowRate(tenantId, postHistoryByTenant, tenantRateWindowMs, tenantRateMaxRequests)) {
-            return {
-              statusCode: 429,
-              payload: {
-                ok: false,
-                error_code: "TENANT_RATE_LIMITED",
-                message: `too many requests for tenant ${tenantId}`
-              }
-            };
-          }
-
-          return null;
-        };
-
         if (!idempotencyKey) {
-          const limitError = checkSubmissionLimits();
+          const limitError = checkSubmissionLimits(tenantId);
           if (limitError) {
             return sendJson(res, limitError.statusCode, limitError.payload);
           }
@@ -354,6 +406,10 @@ export async function startExecutionApiServer(
 
         const dryRun = parsed.dry_run ?? false;
         const confirmationFlags = normalizeConfirmationFlags(parsed.confirmation);
+        const executionConfirmations = {
+          risk_acknowledged: entry.required_confirmations.risk && confirmationFlags.risk_acknowledged,
+          billing_acknowledged: entry.required_confirmations.billing && confirmationFlags.billing_acknowledged
+        };
         let idempotencyFingerprint: string | undefined;
         if (idempotencyKey) {
           idempotencyFingerprint = computeExecutionRequestFingerprint({
@@ -383,7 +439,7 @@ export async function startExecutionApiServer(
             });
           }
 
-          const limitError = checkSubmissionLimits();
+          const limitError = checkSubmissionLimits(tenantId);
           if (limitError) {
             return sendJson(res, limitError.statusCode, limitError.payload);
           }
@@ -404,35 +460,18 @@ export async function startExecutionApiServer(
           actor_role: actorRole,
           created_at: now,
           idempotency_key: idempotencyKey ?? undefined,
-          idempotency_fingerprint: idempotencyFingerprint
+          idempotency_fingerprint: idempotencyFingerprint,
+          request: {
+            input: cloneExecutionInput(input),
+            dry_run: dryRun,
+            confirmation: {
+              risk_acknowledged: executionConfirmations.risk_acknowledged,
+              billing_acknowledged: executionConfirmations.billing_acknowledged
+            }
+          }
         };
 
-        jobs.set(executionId, job);
-        await persistJobs();
-        await appendTenantAudit(job).catch(() => undefined);
-        let runningJob: Promise<void>;
-        runningJob = runJob(
-          job,
-          input,
-          dryRun,
-          entry.required_confirmations,
-          job.require_signature,
-          executionTimeoutMs,
-          jobs,
-          runtimeStateByExecutionId,
-          persistJobs,
-          appendTenantAudit,
-          {
-            logsDirectory,
-            logRetentionDays,
-            logMaxFiles
-          }
-        )
-          .catch(() => undefined)
-          .finally(() => {
-            runningJobPromises.delete(runningJob);
-          });
-        runningJobPromises.add(runningJob);
+        await queueExecutionJob(job);
 
         return sendJson(res, 202, {
           ok: true,
@@ -496,6 +535,79 @@ export async function startExecutionApiServer(
           execution_id: canceled.execution_id,
           tenant_id: canceled.tenant_id,
           status: canceled.status
+        });
+      }
+
+      if (method === "POST" && route.startsWith("/spell-executions/") && route.endsWith("/retry")) {
+        const matched = /^\/spell-executions\/([^/]+)\/retry$/.exec(route);
+        const executionId = matched && matched[1] ? matched[1].trim() : "";
+        if (!executionId || !/^[a-zA-Z0-9_.-]+$/.test(executionId)) {
+          return sendJson(res, 400, { ok: false, error_code: "INVALID_EXECUTION_ID", message: "invalid execution id" });
+        }
+
+        const existing = jobs.get(executionId);
+        if (!existing) {
+          return sendJson(res, 404, { ok: false, error_code: "EXECUTION_NOT_FOUND", message: "execution not found" });
+        }
+
+        if (authKeys.length > 0 && authContext.ok && authContext.role !== "admin" && authContext.tenantId !== existing.tenant_id) {
+          return sendJson(res, 403, {
+            ok: false,
+            error_code: "TENANT_FORBIDDEN",
+            message: `tenant retry denied: ${existing.tenant_id}`
+          });
+        }
+
+        if (!isRetryableJobStatus(existing.status)) {
+          return sendJson(res, 409, {
+            ok: false,
+            error_code: "NOT_RETRYABLE",
+            message: `execution is not retryable: ${existing.status}`
+          });
+        }
+
+        if (!existing.request) {
+          return sendJson(res, 409, {
+            ok: false,
+            error_code: "NOT_RETRYABLE",
+            message: "execution request snapshot is unavailable for retry"
+          });
+        }
+
+        const limitError = checkSubmissionLimits(existing.tenant_id);
+        if (limitError) {
+          return sendJson(res, limitError.statusCode, limitError.payload);
+        }
+
+        const retryExecutionId = `exec_${Date.now()}_${randomUUID().slice(0, 8)}`;
+        const queuedAt = new Date().toISOString();
+        const retriedSource: ExecutionJob = {
+          ...existing,
+          retried_by: retryExecutionId
+        };
+        const retryJob: ExecutionJob = {
+          execution_id: retryExecutionId,
+          button_id: existing.button_id,
+          spell_id: existing.spell_id,
+          version: existing.version,
+          require_signature: existing.require_signature,
+          status: "queued",
+          tenant_id: existing.tenant_id,
+          actor_role: existing.actor_role,
+          created_at: queuedAt,
+          request: cloneExecutionRequestSnapshot(existing.request),
+          retry_of: existing.execution_id
+        };
+
+        jobs.set(existing.execution_id, retriedSource);
+        await queueExecutionJob(retryJob);
+
+        return sendJson(res, 202, {
+          ok: true,
+          execution_id: retryJob.execution_id,
+          tenant_id: retryJob.tenant_id,
+          status: retryJob.status,
+          retry_of: retryJob.retry_of
         });
       }
 
@@ -811,7 +923,9 @@ function summarizeJob(job: ExecutionJob): Record<string, unknown> {
     finished_at: job.finished_at,
     error_code: job.error_code,
     message: job.message,
-    runtime_execution_id: job.runtime_execution_id
+    runtime_execution_id: job.runtime_execution_id,
+    retry_of: job.retry_of,
+    retried_by: job.retried_by
   };
 }
 
@@ -923,6 +1037,21 @@ function normalizeConfirmationFlags(confirmation: CreateExecutionRequest["confir
   return {
     risk_acknowledged: confirmation?.risk_acknowledged === true,
     billing_acknowledged: confirmation?.billing_acknowledged === true
+  };
+}
+
+function cloneExecutionInput(input: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(input)) as Record<string, unknown>;
+}
+
+function cloneExecutionRequestSnapshot(snapshot: ExecutionRequestSnapshot): ExecutionRequestSnapshot {
+  return {
+    input: cloneExecutionInput(snapshot.input),
+    dry_run: snapshot.dry_run,
+    confirmation: {
+      risk_acknowledged: snapshot.confirmation.risk_acknowledged,
+      billing_acknowledged: snapshot.confirmation.billing_acknowledged
+    }
   };
 }
 
@@ -1194,6 +1323,10 @@ function isTerminalJobStatus(status: JobStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "timeout" || status === "canceled";
 }
 
+function isRetryableJobStatus(status: JobStatus): boolean {
+  return status === "failed" || status === "timeout" || status === "canceled";
+}
+
 function requiresApiAuth(route: string): boolean {
   return (
     route === "/buttons" ||
@@ -1374,10 +1507,17 @@ async function loadExecutionJobsIndex(filePath: string): Promise<Map<string, Exe
     if (!isExecutionJob(item)) {
       continue;
     }
+    const partial = item as Partial<ExecutionJob>;
+    const request = isExecutionRequestSnapshot(partial.request)
+      ? cloneExecutionRequestSnapshot(partial.request)
+      : undefined;
     jobs.set(item.execution_id, {
       ...item,
-      tenant_id: normalizeTenantId((item as Partial<ExecutionJob>).tenant_id),
-      require_signature: Boolean((item as Partial<ExecutionJob>).require_signature)
+      tenant_id: normalizeTenantId(partial.tenant_id),
+      require_signature: Boolean(partial.require_signature),
+      request,
+      retry_of: typeof partial.retry_of === "string" ? partial.retry_of : undefined,
+      retried_by: typeof partial.retried_by === "string" ? partial.retried_by : undefined
     });
   }
 
@@ -1542,6 +1682,28 @@ function readJobTimestamp(job: ExecutionJob): number | null {
   return value;
 }
 
+function isExecutionRequestSnapshot(value: unknown): value is ExecutionRequestSnapshot {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const obj = value as Record<string, unknown>;
+  if (!obj.input || typeof obj.input !== "object" || Array.isArray(obj.input)) {
+    return false;
+  }
+  if (typeof obj.dry_run !== "boolean") {
+    return false;
+  }
+  if (!obj.confirmation || typeof obj.confirmation !== "object" || Array.isArray(obj.confirmation)) {
+    return false;
+  }
+
+  const confirmation = obj.confirmation as Record<string, unknown>;
+  return (
+    typeof confirmation.risk_acknowledged === "boolean" && typeof confirmation.billing_acknowledged === "boolean"
+  );
+}
+
 function isExecutionJob(value: unknown): value is ExecutionJob {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
@@ -1560,6 +1722,9 @@ function isExecutionJob(value: unknown): value is ExecutionJob {
     typeof obj.status === "string" &&
     (obj.idempotency_key === undefined || typeof obj.idempotency_key === "string") &&
     (obj.idempotency_fingerprint === undefined || typeof obj.idempotency_fingerprint === "string") &&
+    (obj.request === undefined || isExecutionRequestSnapshot(obj.request)) &&
+    (obj.retry_of === undefined || typeof obj.retry_of === "string") &&
+    (obj.retried_by === undefined || typeof obj.retried_by === "string") &&
     isJobStatus(obj.status)
   );
 }

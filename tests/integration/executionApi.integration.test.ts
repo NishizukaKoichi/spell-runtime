@@ -108,6 +108,9 @@ describe("execution api integration", () => {
       expect(script).toContain("makeApiHeaders");
       expect(script).toContain("data-cancel-id");
       expect(script).toContain("/cancel");
+      expect(script).toContain("data-retry-id");
+      expect(script).toContain("/retry");
+      expect(script).toContain("Retry links:");
     } finally {
       await server.close();
     }
@@ -355,6 +358,174 @@ describe("execution api integration", () => {
       expect(canceledPayload.error_code).toBe("ALREADY_TERMINAL");
     } finally {
       await server.close();
+    }
+  });
+
+  test("POST /api/spell-executions/:execution_id/retry enqueues linked retry for retryable execution", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json")
+    });
+
+    try {
+      const sourceExecutionId = await createExecution(server.port, {
+        button_id: "repo_ops_guarded",
+        actor_role: "admin"
+      });
+      const sourceDone = await waitForExecution(server.port, sourceExecutionId);
+      expect(sourceDone.execution.status).toBe("failed");
+
+      const retried = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions/${sourceExecutionId}/retry`, {
+        method: "POST"
+      });
+      expect(retried.status).toBe(202);
+      const retriedPayload = (await retried.json()) as Record<string, unknown>;
+      const retryExecutionId = String(retriedPayload.execution_id);
+      expect(retryExecutionId).not.toBe(sourceExecutionId);
+      expect(retriedPayload.retry_of).toBe(sourceExecutionId);
+      expect(retriedPayload.status).toBe("queued");
+
+      const retryDone = await waitForExecution(server.port, retryExecutionId);
+      expect(retryDone.execution.retry_of).toBe(sourceExecutionId);
+      expect(retryDone.execution.button_id).toBe(sourceDone.execution.button_id);
+      expect(retryDone.execution.spell_id).toBe(sourceDone.execution.spell_id);
+      expect(retryDone.execution.version).toBe(sourceDone.execution.version);
+      expect(retryDone.execution.tenant_id).toBe(sourceDone.execution.tenant_id);
+      expect(retryDone.execution.actor_role).toBe(sourceDone.execution.actor_role);
+
+      const sourceDetail = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions/${sourceExecutionId}`);
+      expect(sourceDetail.status).toBe(200);
+      const sourceDetailPayload = (await sourceDetail.json()) as { execution: Record<string, unknown> };
+      expect(sourceDetailPayload.execution.retried_by).toBe(retryExecutionId);
+
+      const listed = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions?limit=10`);
+      expect(listed.status).toBe(200);
+      const listedPayload = (await listed.json()) as {
+        executions: Array<{ execution_id: string; retry_of?: string; retried_by?: string }>;
+      };
+      const listedSource = listedPayload.executions.find((execution) => execution.execution_id === sourceExecutionId);
+      const listedRetry = listedPayload.executions.find((execution) => execution.execution_id === retryExecutionId);
+      expect(listedSource?.retried_by).toBe(retryExecutionId);
+      expect(listedRetry?.retry_of).toBe(sourceExecutionId);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("POST /api/spell-executions/:execution_id/retry returns NOT_RETRYABLE for non-retryable status", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json")
+    });
+
+    try {
+      const sourceExecutionId = await createExecution(server.port, {
+        button_id: "publish_site_high_risk",
+        actor_role: "admin",
+        confirmation: { risk_acknowledged: true }
+      });
+      const sourceDone = await waitForExecution(server.port, sourceExecutionId);
+      expect(sourceDone.execution.status).toBe("succeeded");
+
+      const retried = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions/${sourceExecutionId}/retry`, {
+        method: "POST"
+      });
+      expect(retried.status).toBe(409);
+      const retriedPayload = (await retried.json()) as Record<string, unknown>;
+      expect(retriedPayload.error_code).toBe("NOT_RETRYABLE");
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("POST /api/spell-executions/:execution_id/retry forbids non-admin cross-tenant retry with auth keys", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json"),
+      authKeys: ["team_a:operator=team-a-op-token", "team_b:admin=team-b-admin-token"]
+    });
+
+    try {
+      const created = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-b-admin-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "repo_ops_guarded",
+          actor_role: "operator"
+        })
+      });
+      expect(created.status).toBe(202);
+      const createdPayload = (await created.json()) as Record<string, unknown>;
+      const sourceExecutionId = String(createdPayload.execution_id);
+
+      const sourceDone = await waitForExecution(server.port, sourceExecutionId, "team-b-admin-token");
+      expect(sourceDone.execution.status).toBe("failed");
+      expect(sourceDone.execution.tenant_id).toBe("team_b");
+
+      const forbidden = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions/${sourceExecutionId}/retry`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-a-op-token" }
+      });
+      expect(forbidden.status).toBe(403);
+      const forbiddenPayload = (await forbidden.json()) as Record<string, unknown>;
+      expect(forbiddenPayload.error_code).toBe("TENANT_FORBIDDEN");
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("persists retry linkage and restores after server restart", async () => {
+    const registryPath = path.join(process.cwd(), "examples/button-registry.v1.json");
+
+    const server1 = await startExecutionApiServer({
+      port: 0,
+      registryPath
+    });
+
+    let sourceExecutionId = "";
+    let retryExecutionId = "";
+    try {
+      sourceExecutionId = await createExecution(server1.port, {
+        button_id: "repo_ops_guarded",
+        actor_role: "admin"
+      });
+      await waitForExecution(server1.port, sourceExecutionId);
+
+      const retried = await fetch(`http://127.0.0.1:${server1.port}/api/spell-executions/${sourceExecutionId}/retry`, {
+        method: "POST"
+      });
+      expect(retried.status).toBe(202);
+      const retriedPayload = (await retried.json()) as Record<string, unknown>;
+      retryExecutionId = String(retriedPayload.execution_id);
+      await waitForExecution(server1.port, retryExecutionId);
+    } finally {
+      await server1.close();
+    }
+
+    const indexPath = path.join(tempHome, ".spell", "logs", "index.json");
+    const indexRaw = await readFile(indexPath, "utf8");
+    expect(indexRaw).toContain(sourceExecutionId);
+    expect(indexRaw).toContain(retryExecutionId);
+    expect(indexRaw).toContain('"retry_of"');
+    expect(indexRaw).toContain('"retried_by"');
+
+    const server2 = await startExecutionApiServer({
+      port: 0,
+      registryPath
+    });
+
+    try {
+      const sourceDetail = await fetch(`http://127.0.0.1:${server2.port}/api/spell-executions/${sourceExecutionId}`);
+      expect(sourceDetail.status).toBe(200);
+      const sourcePayload = (await sourceDetail.json()) as { execution: Record<string, unknown> };
+      expect(sourcePayload.execution.retried_by).toBe(retryExecutionId);
+
+      const retryDetail = await fetch(`http://127.0.0.1:${server2.port}/api/spell-executions/${retryExecutionId}`);
+      expect(retryDetail.status).toBe(200);
+      const retryPayload = (await retryDetail.json()) as { execution: Record<string, unknown> };
+      expect(retryPayload.execution.retry_of).toBe(sourceExecutionId);
+    } finally {
+      await server2.close();
     }
   });
 

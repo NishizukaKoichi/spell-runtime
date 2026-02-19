@@ -63,6 +63,7 @@ See sample:
 - `GET /api/spell-executions` (query: `status`, `button_id`, `tenant_id`, `limit`)
 - `GET /api/spell-executions/:execution_id`
 - `POST /api/spell-executions/:execution_id/cancel`
+- `POST /api/spell-executions/:execution_id/retry`
 - `GET /` (minimal receipts UI)
 - `GET /ui/app.js` (UI client script)
 
@@ -128,6 +129,9 @@ Response (failure):
 
 ## 6.2 GET /api/spell-executions/:execution_id
 Returns execution summary and sanitized receipt (no raw stdout/stderr).
+Execution summary includes retry linkage fields:
+- `retry_of` (set on retried executions)
+- `retried_by` (set on source execution to newest retry id)
 
 Execution status values:
 - `queued`
@@ -147,8 +151,22 @@ Behavior:
 - already terminal (`succeeded`/`failed`/`timeout`/`canceled`): `409 ALREADY_TERMINAL`
 - when auth keys are enabled, non-admin keys cannot cancel other tenant jobs (`403 TENANT_FORBIDDEN`)
 
+## 6.4 POST /api/spell-executions/:execution_id/retry
+Retries terminal executions in retryable states.
+
+Behavior:
+- unknown `execution_id`: `404 EXECUTION_NOT_FOUND`
+- allowed source states: `failed` / `timeout` / `canceled`
+- non-retryable source states (`queued` / `running` / `succeeded`): `409 NOT_RETRYABLE`
+- creates a new execution with a new `execution_id` using the original button/input/flags/tenant/role semantics
+- writes retry linkage:
+  - new execution: `retry_of=<source_execution_id>`
+  - source execution: `retried_by=<new_execution_id>` (latest retry wins)
+- when auth keys are enabled, non-admin keys cannot retry other tenant jobs (`403 TENANT_FORBIDDEN`)
+
 Execution list state is persisted at `~/.spell/logs/index.json` so lists survive API restarts.
 Idempotency key mappings for executions are persisted in that same index file and survive API restarts.
+Retry linkage (`retry_of`, `retried_by`) is persisted in the same index and restored on restart.
 When API auth is enabled, all `/api/*` endpoints require `Authorization: Bearer <token>` (or `x-api-key`).
 Recommended auth configuration uses `SPELL_API_AUTH_KEYS` (role-bound keys) so UI cannot self-assert `actor_role`.
 
@@ -207,6 +225,8 @@ Map common stderr messages from runtime to stable API error codes:
 - Button click opens confirmation dialog when guard flags apply.
 - Show execution summary before final confirm (spell id/version, risk, billing, effects).
 - On success, show `execution_id` and link to detail view.
+- For `failed`/`timeout`/`canceled` executions, show a Retry action that calls `POST /api/spell-executions/:execution_id/retry`.
+- In detail view, show retry linkage (`retry_of` / `retried_by`) as navigable links.
 - On failure, show mapped message and a troubleshooting hint.
 
 ## 11. Operational Checklist
