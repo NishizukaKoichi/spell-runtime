@@ -42,6 +42,11 @@
             "minItems": 1,
             "items": { "type": "string", "minLength": 1 }
           },
+          "allowed_tenants": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
           "label": { "type": "string" },
           "description": { "type": "string" },
           "owners": {

@@ -38,6 +38,27 @@
       "allowed_roles": ["admin"]
     },
     {
+      "button_id": "call_webhook_team_a_only",
+      "label": "Call Webhook Demo (Team A Only)",
+      "description": "Tenant allowlist sample",
+      "spell_id": "samples/call-webhook",
+      "version": "1.0.0",
+      "defaults": {
+        "event": "deploy",
+        "source": "manual",
+        "payload": {
+          "service": "web"
+        }
+      },
+      "required_confirmations": {
+        "risk": false,
+        "billing": false
+      },
+      "require_signature": false,
+      "allowed_roles": ["admin", "operator"],
+      "allowed_tenants": ["team_a"]
+    },
+    {
       "button_id": "publish_site_high_risk",
       "label": "Publish Site (High Risk)",
       "description": "Risk confirmation sample",

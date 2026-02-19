@@ -312,6 +312,8 @@ The workflow verifies that tag version matches package.json.
   require_signature=true: Execution API enforces signature (--require-signature)
   require_signature=false or omitted: Execution API opts into unsigned path (--allow-unsigned)
   SPELL_API_FORCE_REQUIRE_SIGNATURE=true overrides per-button policy and enforces signature for all API executions
+  allowed_tenants: optional tenant id allowlist per button
+  when allowed_tenants is set, POST /api/spell-executions returns 403 TENANT_NOT_ALLOWED for non-listed tenants
 
 11. Install from npm
 Global install:
@@ -357,7 +359,7 @@ Defaults:
 - routes:
   GET /
   GET /ui/app.js
-  GET /api/buttons
+  GET /api/buttons (includes allowed_tenants for each button; null when unrestricted)
   GET /api/spell-executions (status/button_id/tenant_id/limit query supported)
   POST /api/spell-executions
   GET /api/spell-executions/:execution_id

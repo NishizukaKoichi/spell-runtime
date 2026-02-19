@@ -75,4 +75,90 @@ describe("button registry contract", () => {
 
     await expect(loadButtonRegistryFromFile(file)).rejects.toThrow(/button registry validation failed/);
   });
+
+  test("accepts optional allowed_tenants when valid", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "button-registry-"));
+    const file = path.join(dir, "allowed-tenants-valid.json");
+
+    await writeFile(
+      file,
+      JSON.stringify(
+        {
+          version: "v1",
+          buttons: [
+            {
+              button_id: "tenant_restricted",
+              spell_id: "samples/call-webhook",
+              version: "1.0.0",
+              defaults: {},
+              required_confirmations: { risk: false, billing: false },
+              allowed_roles: ["admin"],
+              allowed_tenants: ["team_a", "team_b"]
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const registry = await loadButtonRegistryFromFile(file);
+    expect(registry.buttons[0]?.allowed_tenants).toEqual(["team_a", "team_b"]);
+  });
+
+  test("rejects invalid allowed_tenants", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "button-registry-"));
+    const emptyListFile = path.join(dir, "allowed-tenants-empty.json");
+    const emptyTenantFile = path.join(dir, "allowed-tenants-empty-item.json");
+
+    await writeFile(
+      emptyListFile,
+      JSON.stringify(
+        {
+          version: "v1",
+          buttons: [
+            {
+              button_id: "tenant_restricted",
+              spell_id: "samples/call-webhook",
+              version: "1.0.0",
+              defaults: {},
+              required_confirmations: { risk: false, billing: false },
+              allowed_roles: ["admin"],
+              allowed_tenants: []
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await writeFile(
+      emptyTenantFile,
+      JSON.stringify(
+        {
+          version: "v1",
+          buttons: [
+            {
+              button_id: "tenant_restricted",
+              spell_id: "samples/call-webhook",
+              version: "1.0.0",
+              defaults: {},
+              required_confirmations: { risk: false, billing: false },
+              allowed_roles: ["admin"],
+              allowed_tenants: [""]
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    await expect(loadButtonRegistryFromFile(emptyListFile)).rejects.toThrow(/button registry validation failed/);
+    await expect(loadButtonRegistryFromFile(emptyTenantFile)).rejects.toThrow(/button registry validation failed/);
+  });
 });

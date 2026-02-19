@@ -391,6 +391,9 @@ spell cast samples/call-webhook --dry-run -p event=deploy -p source=manual -p pa
     - `true`: Execution API enforces signature (`--require-signature`)
     - `false`/omitted: Execution API opts into unsigned path (`--allow-unsigned`)
   - `SPELL_API_FORCE_REQUIRE_SIGNATURE=true` overrides per-button policy and enforces signature for all API executions
+  - `allowed_tenants`:
+    - optional tenant id allowlist per button
+    - when set, `POST /api/spell-executions` returns `403 TENANT_NOT_ALLOWED` for non-listed tenants
 
 ## Runtime Decision Log
 
@@ -423,7 +426,7 @@ By default it listens on `:8787` and reads:
 - routes:
   - `GET /` (minimal Receipts UI)
   - `GET /ui/app.js` (UI client script)
-  - `GET /api/buttons`
+  - `GET /api/buttons` (includes `allowed_tenants` for each button; `null` when unrestricted)
   - `GET /api/spell-executions` (`status`, `button_id`, `tenant_id`, `limit` query supported)
   - `POST /api/spell-executions`
   - `GET /api/spell-executions/:execution_id`

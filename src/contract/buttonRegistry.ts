@@ -15,6 +15,7 @@ export interface ButtonRegistryEntry {
   required_confirmations: ButtonRequiredConfirmations;
   require_signature?: boolean;
   allowed_roles: string[];
+  allowed_tenants?: string[];
   label?: string;
   description?: string;
 }
@@ -63,6 +64,11 @@ const registrySchema = {
           },
           require_signature: { type: "boolean" },
           allowed_roles: {
+            type: "array",
+            minItems: 1,
+            items: { type: "string", minLength: 1 }
+          },
+          allowed_tenants: {
             type: "array",
             minItems: 1,
             items: { type: "string", minLength: 1 }

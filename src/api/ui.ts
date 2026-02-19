@@ -173,6 +173,7 @@ export function renderReceiptsHtml(): string {
         </div>
         <div class="hint" id="guardHint" style="margin-top:8px">Select a button to see required confirmations.</div>
         <div class="hint" id="roleHint">Allowed roles: -</div>
+        <div class="hint" id="tenantHint">Allowed tenants: -</div>
 
         <div style="margin-top:8px">
           <label>input JSON (merged over defaults)</label>
@@ -224,6 +225,7 @@ export function renderReceiptsClientJs(): string {
     '  executionDetail: document.getElementById("executionDetail"),',
     '  guardHint: document.getElementById("guardHint"),',
     '  roleHint: document.getElementById("roleHint"),',
+    '  tenantHint: document.getElementById("tenantHint"),',
     '  executionStatus: document.getElementById("executionStatus"),',
     '  executionLimit: document.getElementById("executionLimit"),',
     '  apiToken: document.getElementById("apiToken")',
@@ -252,6 +254,7 @@ export function renderReceiptsClientJs(): string {
     "  }",
     "",
     "  for (const button of state.buttons) {",
+    "    const tenantHint = Array.isArray(button.allowed_tenants) && button.allowed_tenants.length > 0 ? button.allowed_tenants.join(',') : 'all';",
     "    const card = document.createElement('div');",
     "    card.className = 'card';",
     "    card.innerHTML = [",
@@ -259,6 +262,7 @@ export function renderReceiptsClientJs(): string {
     "      '<div class=\"hint\">button_id: ' + escapeHtml(button.button_id) + '</div>',",
     "      '<div class=\"hint\">spell: ' + escapeHtml(button.spell_id) + '@' + escapeHtml(button.version) + '</div>',",
     "      '<div class=\"hint\">allowed roles: ' + escapeHtml((button.allowed_roles || []).join(',')) + '</div>',",
+    "      '<div class=\"hint\">allowed tenants: ' + escapeHtml(tenantHint) + '</div>',",
     "      '<div><span class=\"pill\">risk:' + String(button.required_confirmations.risk) + '</span><span class=\"pill\">billing:' + String(button.required_confirmations.billing) + '</span><span class=\"pill\">signature:' + String(Boolean(button.require_signature)) + '</span></div>',",
     "      '<div style=\"margin-top:8px\"><button data-button-id=\"' + escapeHtml(button.button_id) + '\">Select</button></div>'",
     "    ].join('');",
@@ -294,6 +298,7 @@ export function renderReceiptsClientJs(): string {
     "  if (!state.selectedButton) {",
     "    el.guardHint.textContent = 'Select a button to see required confirmations.';",
     "    el.roleHint.textContent = 'Allowed roles: -';",
+    "    el.tenantHint.textContent = 'Allowed tenants: -';",
     "    el.riskAck.checked = false;",
     "    el.billingAck.checked = false;",
     "    el.riskAck.disabled = true;",
@@ -311,6 +316,10 @@ export function renderReceiptsClientJs(): string {
     "",
     "  el.guardHint.textContent = 'Required checks: risk=' + String(requiredRisk) + ', billing=' + String(requiredBilling) + ', signature=' + String(requiredSignature);",
     "  el.roleHint.textContent = 'Allowed roles: ' + (state.selectedButton.allowed_roles || []).join(', ');",
+    "  const allowedTenants = Array.isArray(state.selectedButton.allowed_tenants) && state.selectedButton.allowed_tenants.length > 0",
+    "    ? state.selectedButton.allowed_tenants.join(', ')",
+    "    : 'all';",
+    "  el.tenantHint.textContent = 'Allowed tenants: ' + allowedTenants;",
     "}",
     "",
     "async function submitExecution(event) {",

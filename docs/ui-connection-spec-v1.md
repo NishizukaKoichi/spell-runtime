@@ -50,6 +50,9 @@ Optional fields:
 - `require_signature`: boolean, when true backend adds `--require-signature`
   - when false/omitted backend can opt into `--allow-unsigned`
   - if backend sets `SPELL_API_FORCE_REQUIRE_SIGNATURE=true`, this field is ignored and signature is always required
+- `allowed_tenants`: tenant id allowlist for this button
+  - when present, backend only accepts requests from those auth-derived tenant ids
+  - when omitted, button is available to all tenants
 
 See sample:
 - `/Users/koichinishizuka/spell-runtime/examples/button-registry.v1.json`
@@ -147,6 +150,7 @@ Given registry entry and request:
 Map common stderr messages from runtime to stable API error codes:
 - `risk high requires --yes` -> `RISK_CONFIRMATION_REQUIRED`
 - `billing enabled requires --allow-billing` -> `BILLING_CONFIRMATION_REQUIRED`
+- tenant is not in button allowlist -> `TENANT_NOT_ALLOWED`
 - `signature required: ...` -> `SIGNATURE_REQUIRED`
 - `missing connector token ...` -> `CONNECTOR_TOKEN_MISSING`
 - `platform mismatch: ...` -> `PLATFORM_UNSUPPORTED`

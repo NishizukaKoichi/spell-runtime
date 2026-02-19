@@ -86,6 +86,9 @@ describe("execution api integration", () => {
       };
       expect(buttonsPayload.buttons.length).toBeGreaterThan(0);
       expect(buttonsPayload.buttons[0]?.button_id).toBeTruthy();
+      expect(Object.prototype.hasOwnProperty.call(buttonsPayload.buttons[0] ?? {}, "allowed_tenants")).toBe(true);
+      const teamAOnly = buttonsPayload.buttons.find((button) => button.button_id === "call_webhook_team_a_only");
+      expect(teamAOnly?.allowed_tenants).toEqual(["team_a"]);
 
       const page = await fetch(`http://127.0.0.1:${server.port}/`);
       expect(page.status).toBe(200);
@@ -94,12 +97,14 @@ describe("execution api integration", () => {
       expect(html).toContain("guardHint");
       expect(html).toContain("executionStatus");
       expect(html).toContain("apiToken");
+      expect(html).toContain("tenantHint");
 
       const js = await fetch(`http://127.0.0.1:${server.port}/ui/app.js`);
       expect(js.status).toBe(200);
       const script = await js.text();
       expect(script).toContain("updateGuardHints");
       expect(script).toContain("actor role not allowed for selected button");
+      expect(script).toContain("Allowed tenants");
       expect(script).toContain("makeApiHeaders");
     } finally {
       await server.close();
@@ -383,6 +388,46 @@ describe("execution api integration", () => {
       expect(crossTenantPayload.filters.tenant_id).toBe("team_b");
       expect(crossTenantPayload.executions.some((execution) => execution.execution_id === executionB)).toBe(true);
       expect(crossTenantPayload.executions.every((execution) => execution.tenant_id === "team_b")).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("enforces button tenant allowlist for auth keys", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json"),
+      authKeys: ["team_a:operator=team-a-op-token", "team_b:operator=team-b-op-token"]
+    });
+
+    try {
+      const allowed = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-a-op-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "call_webhook_team_a_only",
+          actor_role: "admin",
+          dry_run: true
+        })
+      });
+      expect(allowed.status).toBe(202);
+      const allowedPayload = (await allowed.json()) as Record<string, unknown>;
+      expect(allowedPayload.tenant_id).toBe("team_a");
+
+      const denied = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-b-op-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "call_webhook_team_a_only",
+          actor_role: "admin",
+          dry_run: true
+        })
+      });
+      expect(denied.status).toBe(403);
+      const deniedPayload = (await denied.json()) as Record<string, unknown>;
+      expect(deniedPayload.error_code).toBe("TENANT_NOT_ALLOWED");
+      expect(String(deniedPayload.message)).toContain("team_b");
+      expect(String(deniedPayload.message)).toContain("call_webhook_team_a_only");
     } finally {
       await server.close();
     }

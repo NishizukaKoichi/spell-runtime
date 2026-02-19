@@ -265,6 +265,16 @@ export async function startExecutionApiServer(
           parsed.actor_role ??
           req.headers["x-role"]?.toString() ??
           "anonymous";
+        if (Array.isArray(entry.allowed_tenants) && entry.allowed_tenants.length > 0) {
+          if (!entry.allowed_tenants.includes(tenantId)) {
+            return sendJson(res, 403, {
+              ok: false,
+              error_code: "TENANT_NOT_ALLOWED",
+              message: `tenant ${tenantId} is not allowed for button ${entry.button_id}`
+            });
+          }
+        }
+
         if (!entry.allowed_roles.includes(actorRole)) {
           return sendJson(res, 403, {
             ok: false,
@@ -362,7 +372,8 @@ export async function startExecutionApiServer(
             defaults: button.defaults,
             required_confirmations: button.required_confirmations,
             require_signature: forceRequireSignature || button.require_signature === true,
-            allowed_roles: button.allowed_roles
+            allowed_roles: button.allowed_roles,
+            allowed_tenants: button.allowed_tenants ?? null
           }))
         });
       }
