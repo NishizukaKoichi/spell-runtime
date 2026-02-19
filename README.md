@@ -47,6 +47,9 @@ npm run smoke:npx
 - `spell install <source>`
 - `spell registry set <url>`
 - `spell registry show`
+- `spell registry add <name> <url>`
+- `spell registry remove <name>`
+- `spell registry validate [--name <name>]`
 - `spell policy show`
 - `spell policy validate --file <path>`
 - `spell policy set --file <path>`
@@ -114,9 +117,20 @@ Registry setup example:
 
 ```bash
 spell registry set https://registry.example.test/spell-index.v1.json
+spell registry add mirror https://registry-mirror.example.test/spell-index.v1.json
 spell registry show
+spell registry validate
+spell registry validate --name mirror
 spell install registry:fixtures/hello-host@1.0.0
 ```
+
+Registry index management rules:
+
+- index `name` must be non-empty (after trimming) and unique.
+- `spell registry remove default` is rejected; default index removal is intentionally blocked.
+- `spell registry validate` fetches configured indexes and prints one success line per index:
+  - `<name>\t<url>\t<spell-count>`
+- validation failures exit non-zero with a clear reason.
 
 Registry config file (`~/.spell/registry.json`):
 

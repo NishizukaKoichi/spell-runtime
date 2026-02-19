@@ -143,6 +143,108 @@ describe("spell cli integration", () => {
     }
   });
 
+  test("registry add/remove/validate lifecycle", async () => {
+    const defaultUrl = "https://registry.test/spell-index.v1.json";
+    const mirrorUrl = "https://registry-mirror.test/spell-index.v1.json";
+
+    expect(await runCli(["node", "spell", "registry", "set", defaultUrl])).toBe(0);
+    expect(await runCli(["node", "spell", "registry", "add", "mirror", mirrorUrl])).toBe(0);
+
+    const showWithMirror = await runCliCapture(["node", "spell", "registry", "show"]);
+    expect(showWithMirror.code).toBe(0);
+    expect(showWithMirror.stdout).toContain(`default\t${defaultUrl}`);
+    expect(showWithMirror.stdout).toContain(`mirror\t${mirrorUrl}`);
+
+    nock("https://registry.test").get("/spell-index.v1.json").reply(200, {
+      version: "v1",
+      spells: [{ id: "fixtures/hello-host", version: "1.0.0", source: "https://spell.test/hello-host.git#main" }]
+    });
+
+    nock("https://registry-mirror.test").get("/spell-index.v1.json").reply(200, {
+      version: "v1",
+      spells: [
+        { id: "fixtures/hello-host", version: "1.0.0", source: "https://spell.test/hello-host.git#main" },
+        { id: "fixtures/hello-host", version: "2.0.0", source: "https://spell.test/hello-host.git#v2" }
+      ]
+    });
+
+    const validateAll = await runCliCapture(["node", "spell", "registry", "validate"]);
+    expect(validateAll.code).toBe(0);
+    expect(validateAll.stdout).toContain(`default\t${defaultUrl}\t1`);
+    expect(validateAll.stdout).toContain(`mirror\t${mirrorUrl}\t2`);
+
+    nock("https://registry-mirror.test").get("/spell-index.v1.json").reply(200, {
+      version: "v1",
+      spells: [{ id: "fixtures/hello-host", version: "1.0.0", source: "https://spell.test/hello-host.git#main" }]
+    });
+
+    const validateMirrorOnly = await runCliCapture(["node", "spell", "registry", "validate", "--name", "mirror"]);
+    expect(validateMirrorOnly.code).toBe(0);
+    expect(validateMirrorOnly.stdout).toContain(`mirror\t${mirrorUrl}\t1`);
+    expect(validateMirrorOnly.stdout).not.toContain(`default\t${defaultUrl}`);
+
+    const removeMirror = await runCliCapture(["node", "spell", "registry", "remove", "mirror"]);
+    expect(removeMirror.code).toBe(0);
+    expect(removeMirror.stdout).toContain("removed\tmirror");
+
+    const showAfterRemove = await runCliCapture(["node", "spell", "registry", "show"]);
+    expect(showAfterRemove.code).toBe(0);
+    expect(showAfterRemove.stdout).toContain(`default\t${defaultUrl}`);
+    expect(showAfterRemove.stdout).not.toContain("mirror\t");
+  });
+
+  test("registry add/remove/validate reports failure cases", async () => {
+    const defaultUrl = "https://registry.test/spell-index.v1.json";
+    expect(await runCli(["node", "spell", "registry", "set", defaultUrl])).toBe(0);
+
+    expect(await runCli(["node", "spell", "registry", "add", "mirror", "https://registry-mirror.test/spell-index.v1.json"])).toBe(
+      0
+    );
+
+    const duplicateAdd = await runCliCapture([
+      "node",
+      "spell",
+      "registry",
+      "add",
+      "mirror",
+      "https://registry-another.test/spell-index.v1.json"
+    ]);
+    expect(duplicateAdd.code).toBe(1);
+    expect(duplicateAdd.stderr).toContain("registry index already exists: mirror");
+
+    const emptyName = await runCliCapture([
+      "node",
+      "spell",
+      "registry",
+      "add",
+      "   ",
+      "https://registry-another.test/spell-index.v1.json"
+    ]);
+    expect(emptyName.code).toBe(1);
+    expect(emptyName.stderr).toContain("invalid registry index name");
+
+    const removeDefault = await runCliCapture(["node", "spell", "registry", "remove", "default"]);
+    expect(removeDefault.code).toBe(1);
+    expect(removeDefault.stderr).toContain("cannot remove registry index 'default'");
+
+    const missingName = await runCliCapture(["node", "spell", "registry", "validate", "--name", "missing"]);
+    expect(missingName.code).toBe(1);
+    expect(missingName.stderr).toContain("registry index not found: missing");
+  });
+
+  test("registry validate returns non-zero with fetch failure reason", async () => {
+    const defaultUrl = "https://registry.test/spell-index.v1.json";
+    expect(await runCli(["node", "spell", "registry", "set", defaultUrl])).toBe(0);
+
+    nock("https://registry.test").get("/spell-index.v1.json").reply(500, { error: "server error" });
+
+    const result = await runCliCapture(["node", "spell", "registry", "validate"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      "registry validation failed for 'default': failed to fetch registry index 'https://registry.test/spell-index.v1.json': HTTP 500"
+    );
+  });
+
   test("registry install reports missing entry", async () => {
     const indexUrl = "https://registry.test/spell-index.v1.json";
     expect(await runCli(["node", "spell", "registry", "set", indexUrl])).toBe(0);

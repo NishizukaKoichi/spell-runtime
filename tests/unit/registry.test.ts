@@ -1,11 +1,20 @@
-import { describe, expect, test } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import nock from "nock";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   DEFAULT_REGISTRY_REQUIRED_PINS,
+  addRegistryIndex,
   enforceRegistryRequiredPins,
   parseRegistryIndexJson,
   parseRegistryInstallRef,
+  readRegistryConfig,
   readRegistryRequiredPinsPolicy,
-  resolveRegistryEntry
+  removeRegistryIndex,
+  resolveRegistryEntry,
+  setDefaultRegistryIndex,
+  validateRegistryIndexes
 } from "../../src/bundle/registry";
 
 describe("install registry index", () => {
@@ -170,5 +179,130 @@ describe("registry required pin policy", () => {
     expect(() =>
       enforceRegistryRequiredPins({ ...entryBase, commit: commitPin, digest: digestPin }, installRef, "both")
     ).not.toThrow();
+  });
+});
+
+describe("registry config lifecycle", () => {
+  let originalHome: string | undefined;
+  let tempHome: string;
+
+  beforeEach(async () => {
+    originalHome = process.env.HOME;
+    tempHome = await mkdtemp(path.join(tmpdir(), "spell-registry-home-"));
+    process.env.HOME = tempHome;
+  });
+
+  afterEach(async () => {
+    nock.cleanAll();
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    await rm(tempHome, { recursive: true, force: true });
+  });
+
+  test("adds a named registry index and rejects duplicate names", async () => {
+    await setDefaultRegistryIndex("https://registry-primary.test/spell-index.v1.json");
+    const config = await addRegistryIndex("mirror", "https://registry-mirror.test/spell-index.v1.json");
+
+    expect(config.indexes).toEqual([
+      { name: "default", url: "https://registry-primary.test/spell-index.v1.json" },
+      { name: "mirror", url: "https://registry-mirror.test/spell-index.v1.json" }
+    ]);
+
+    await expect(addRegistryIndex("mirror", "https://registry-another.test/spell-index.v1.json")).rejects.toThrow(
+      /registry index already exists: mirror/
+    );
+  });
+
+  test("rejects empty registry index names on add", async () => {
+    await setDefaultRegistryIndex("https://registry-primary.test/spell-index.v1.json");
+    await expect(addRegistryIndex("   ", "https://registry-mirror.test/spell-index.v1.json")).rejects.toThrow(
+      /invalid registry index name/
+    );
+  });
+
+  test("removes non-default indexes and keeps default", async () => {
+    await setDefaultRegistryIndex("https://registry-primary.test/spell-index.v1.json");
+    await addRegistryIndex("mirror", "https://registry-mirror.test/spell-index.v1.json");
+
+    const updated = await removeRegistryIndex("mirror");
+    expect(updated.indexes).toEqual([{ name: "default", url: "https://registry-primary.test/spell-index.v1.json" }]);
+
+    const persisted = await readRegistryConfig();
+    expect(persisted.indexes).toEqual([{ name: "default", url: "https://registry-primary.test/spell-index.v1.json" }]);
+  });
+
+  test("rejects removing default index", async () => {
+    await setDefaultRegistryIndex("https://registry-primary.test/spell-index.v1.json");
+    await addRegistryIndex("mirror", "https://registry-mirror.test/spell-index.v1.json");
+
+    await expect(removeRegistryIndex("default")).rejects.toThrow(/cannot remove registry index 'default'/);
+  });
+
+  test("validates all indexes and returns spell counts", async () => {
+    await setDefaultRegistryIndex("https://registry-primary.test/spell-index.v1.json");
+    await addRegistryIndex("mirror", "https://registry-mirror.test/spell-index.v1.json");
+
+    nock("https://registry-primary.test").get("/spell-index.v1.json").reply(200, {
+      version: "v1",
+      spells: [{ id: "a/spell", version: "1.0.0", source: "https://spell.test/a.git#main" }]
+    });
+
+    nock("https://registry-mirror.test").get("/spell-index.v1.json").reply(200, {
+      version: "v1",
+      spells: [
+        { id: "a/spell", version: "1.0.0", source: "https://spell.test/a.git#main" },
+        { id: "b/spell", version: "1.2.3", source: "https://spell.test/b.git#main" }
+      ]
+    });
+
+    const results = await validateRegistryIndexes();
+    expect(results).toEqual([
+      {
+        name: "default",
+        url: "https://registry-primary.test/spell-index.v1.json",
+        spellCount: 1
+      },
+      {
+        name: "mirror",
+        url: "https://registry-mirror.test/spell-index.v1.json",
+        spellCount: 2
+      }
+    ]);
+  });
+
+  test("validates a selected index by name and rejects missing name", async () => {
+    await setDefaultRegistryIndex("https://registry-primary.test/spell-index.v1.json");
+    await addRegistryIndex("mirror", "https://registry-mirror.test/spell-index.v1.json");
+
+    nock("https://registry-mirror.test").get("/spell-index.v1.json").reply(200, {
+      version: "v1",
+      spells: [{ id: "b/spell", version: "1.2.3", source: "https://spell.test/b.git#main" }]
+    });
+
+    await expect(validateRegistryIndexes("missing")).rejects.toThrow(/registry index not found: missing/);
+
+    const selected = await validateRegistryIndexes("mirror");
+    expect(selected).toEqual([
+      {
+        name: "mirror",
+        url: "https://registry-mirror.test/spell-index.v1.json",
+        spellCount: 1
+      }
+    ]);
+  });
+
+  test("validation failure includes index name and reason", async () => {
+    await setDefaultRegistryIndex("https://registry-primary.test/spell-index.v1.json");
+
+    nock("https://registry-primary.test").get("/spell-index.v1.json").reply(500, {
+      error: "server error"
+    });
+
+    await expect(validateRegistryIndexes()).rejects.toThrow(
+      /registry validation failed for 'default': failed to fetch registry index 'https:\/\/registry-primary\.test\/spell-index\.v1\.json': HTTP 500/
+    );
   });
 });

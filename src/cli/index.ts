@@ -4,7 +4,13 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Command } from "commander";
 import { installBundle } from "../bundle/install";
-import { readRegistryConfigIfExists, setDefaultRegistryIndex } from "../bundle/registry";
+import {
+  addRegistryIndex,
+  readRegistryConfigIfExists,
+  removeRegistryIndex,
+  setDefaultRegistryIndex,
+  validateRegistryIndexes
+} from "../bundle/registry";
 import { listInstalledSpells, readSchemaFromManifest, resolveInstalledBundle, summarizeSchema } from "../bundle/store";
 import { generateSigningKeypair, signBundleFromPrivateKey } from "../signature/signing";
 import { castSpell } from "../runner/cast";
@@ -48,6 +54,37 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
     .action(async (url: string) => {
       const config = await setDefaultRegistryIndex(url);
       process.stdout.write(`default\t${config.indexes[0].url}\n`);
+    });
+
+  registry
+    .command("add")
+    .description("Add a named registry index")
+    .argument("<name>", "Unique registry index name")
+    .argument("<url>", "URL to spell-index.v1.json")
+    .action(async (name: string, url: string) => {
+      const config = await addRegistryIndex(name, url);
+      const added = config.indexes.find((index) => index.name === name.trim());
+      process.stdout.write(`${added?.name ?? name.trim()}\t${added?.url ?? url}\n`);
+    });
+
+  registry
+    .command("remove")
+    .description("Remove a named registry index")
+    .argument("<name>", "Registry index name to remove")
+    .action(async (name: string) => {
+      await removeRegistryIndex(name);
+      process.stdout.write(`removed\t${name.trim()}\n`);
+    });
+
+  registry
+    .command("validate")
+    .description("Fetch and validate configured registry indexes")
+    .option("--name <name>", "Validate only one configured registry index by name")
+    .action(async (options: { name?: string }) => {
+      const results = await validateRegistryIndexes(options.name);
+      for (const result of results) {
+        process.stdout.write(`${result.name}\t${result.url}\t${result.spellCount}\n`);
+      }
     });
 
   registry

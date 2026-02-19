@@ -14,6 +14,12 @@ export interface RegistryConfigV1 {
   indexes: RegistryIndexRef[];
 }
 
+export interface RegistryValidationResult {
+  name: string;
+  url: string;
+  spellCount: number;
+}
+
 export interface RegistrySpellEntry {
   id: string;
   version: string;
@@ -103,9 +109,69 @@ export async function setDefaultRegistryIndex(rawUrl: string): Promise<RegistryC
     indexes: [{ name: "default", url }]
   };
 
-  await mkdir(spellHome(), { recursive: true });
-  await writeFile(registryConfigPath(), `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  await writeRegistryConfig(config);
   return config;
+}
+
+export async function addRegistryIndex(rawName: string, rawUrl: string): Promise<RegistryConfigV1> {
+  const name = normalizeRegistryIndexName(rawName, "registry index name");
+  const url = normalizeHttpUrl(rawUrl, "registry URL");
+  const config = await readRegistryConfig();
+  if (config.indexes.some((index) => index.name === name)) {
+    throw new SpellError(`registry index already exists: ${name}`);
+  }
+
+  const nextConfig: RegistryConfigV1 = {
+    version: "v1",
+    indexes: [...config.indexes, { name, url }]
+  };
+  await writeRegistryConfig(nextConfig);
+  return nextConfig;
+}
+
+export async function removeRegistryIndex(rawName: string): Promise<RegistryConfigV1> {
+  const name = normalizeRegistryIndexName(rawName, "registry index name");
+  if (name === "default") {
+    throw new SpellError("cannot remove registry index 'default'");
+  }
+
+  const config = await readRegistryConfig();
+  if (!config.indexes.some((index) => index.name === name)) {
+    throw new SpellError(`registry index not found: ${name}`);
+  }
+
+  const nextIndexes = config.indexes.filter((index) => index.name !== name);
+  if (nextIndexes.length === 0) {
+    throw new SpellError(`cannot remove registry index '${name}': at least one index is required`);
+  }
+
+  const nextConfig: RegistryConfigV1 = {
+    version: "v1",
+    indexes: nextIndexes
+  };
+  await writeRegistryConfig(nextConfig);
+  return nextConfig;
+}
+
+export async function validateRegistryIndexes(rawName?: string): Promise<RegistryValidationResult[]> {
+  const config = await readRegistryConfig();
+  const indexes = selectRegistryIndexes(config, rawName);
+  const results: RegistryValidationResult[] = [];
+
+  for (const index of indexes) {
+    try {
+      const loadedIndex = await fetchRegistryIndex(index.url);
+      results.push({
+        name: index.name,
+        url: index.url,
+        spellCount: loadedIndex.spells.length
+      });
+    } catch (error) {
+      throw new SpellError(`registry validation failed for '${index.name}': ${(error as Error).message}`);
+    }
+  }
+
+  return results;
 }
 
 export async function readRegistryConfig(): Promise<RegistryConfigV1> {
@@ -148,7 +214,14 @@ export function parseRegistryConfigJson(raw: string, source: string): RegistryCo
   }
 
   const config = parsed as RegistryConfigV1;
+  const seenNames = new Set<string>();
   for (const index of config.indexes) {
+    const normalizedName = normalizeRegistryIndexName(index.name, "registry index name");
+    if (seenNames.has(normalizedName)) {
+      throw new SpellError(`registry config validation failed: duplicate registry index name: ${normalizedName}`);
+    }
+    seenNames.add(normalizedName);
+    index.name = normalizedName;
     normalizeHttpUrl(index.url, `registry index URL (${index.name})`);
   }
 
@@ -274,6 +347,24 @@ async function fetchRegistryIndex(url: string): Promise<RegistryIndexV1> {
   return parseRegistryIndexJson(raw, url);
 }
 
+function selectRegistryIndexes(config: RegistryConfigV1, rawName?: string): RegistryIndexRef[] {
+  if (rawName === undefined) {
+    return config.indexes;
+  }
+
+  const name = normalizeRegistryIndexName(rawName, "registry index name");
+  const found = config.indexes.find((index) => index.name === name);
+  if (!found) {
+    throw new SpellError(`registry index not found: ${name}`);
+  }
+  return [found];
+}
+
+async function writeRegistryConfig(config: RegistryConfigV1): Promise<void> {
+  await mkdir(spellHome(), { recursive: true });
+  await writeFile(registryConfigPath(), `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
 function parseJson(raw: string, kind: string, source: string): unknown {
   try {
     return JSON.parse(raw) as unknown;
@@ -300,4 +391,13 @@ function normalizeHttpUrl(rawValue: string, label: string): string {
   }
 
   return parsed.toString();
+}
+
+function normalizeRegistryIndexName(rawValue: string, label: string): string {
+  const value = rawValue.trim();
+  if (!value) {
+    throw new SpellError(`invalid ${label}: ${rawValue}`);
+  }
+
+  return value;
 }
