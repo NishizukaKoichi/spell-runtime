@@ -301,6 +301,7 @@ The workflow verifies that tag version matches package.json.
 - Registry optional policy:
   require_signature=true: Execution API enforces signature (--require-signature)
   require_signature=false or omitted: Execution API opts into unsigned path (--allow-unsigned)
+  SPELL_API_FORCE_REQUIRE_SIGNATURE=true overrides per-button policy and enforces signature for all API executions
 
 11. Install from npm
 Global install:
@@ -357,6 +358,7 @@ Optional environment variables:
 - SPELL_BUTTON_REGISTRY_PATH
 - SPELL_API_AUTH_KEYS (comma-separated role=token or tenant:role=token entries; when set, /api/* requires auth and derives actor_role + tenant_id from token)
 - SPELL_API_AUTH_TOKENS (legacy: comma-separated tokens; when set, /api/* requires auth but does not bind role)
+- SPELL_API_FORCE_REQUIRE_SIGNATURE (default false; when true, API ignores per-button unsigned policy and always appends --require-signature)
 - SPELL_API_BODY_LIMIT_BYTES
 - SPELL_API_EXECUTION_TIMEOUT_MS
 - SPELL_API_RATE_LIMIT_WINDOW_MS

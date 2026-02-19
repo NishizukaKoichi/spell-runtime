@@ -153,7 +153,7 @@ export function renderReceiptsHtml(): string {
 
     <section class="panel" id="formPanel">
       <h2>Run Button</h2>
-      <div class="hint">Guard confirmations and signature policy are required only when configured by button registry.</div>
+      <div class="hint">Guard confirmations and signature policy are driven by button registry and server policy.</div>
       <form id="runForm">
         <div class="row">
           <div style="flex:1">

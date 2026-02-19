@@ -518,6 +518,34 @@ describe("execution api integration", () => {
     }
   });
 
+  test("can force signature policy globally for all buttons", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json"),
+      forceRequireSignature: true
+    });
+
+    try {
+      const buttons = await fetch(`http://127.0.0.1:${server.port}/api/buttons`);
+      expect(buttons.status).toBe(200);
+      const buttonsPayload = (await buttons.json()) as {
+        buttons: Array<{ button_id: string; require_signature: boolean }>;
+      };
+      const callWebhook = buttonsPayload.buttons.find((button) => button.button_id === "call_webhook_demo");
+      expect(callWebhook?.require_signature).toBe(true);
+
+      const executionId = await createExecution(server.port, {
+        button_id: "call_webhook_demo",
+        actor_role: "admin"
+      });
+      const done = await waitForExecution(server.port, executionId);
+      expect(done.execution.status).toBe("failed");
+      expect(done.execution.error_code).toBe("SIGNATURE_REQUIRED");
+    } finally {
+      await server.close();
+    }
+  });
+
   test("rejects request with direct spell_id field (button_id only contract)", async () => {
     const server = await startExecutionApiServer({
       port: 0,

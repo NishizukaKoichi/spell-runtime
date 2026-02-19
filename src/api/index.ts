@@ -15,6 +15,7 @@ async function main(): Promise<void> {
   const authKeys = readOptionalCsvEnv("SPELL_API_AUTH_KEYS");
   const logRetentionDays = readOptionalIntegerEnv("SPELL_API_LOG_RETENTION_DAYS", 0);
   const logMaxFiles = readOptionalIntegerEnv("SPELL_API_LOG_MAX_FILES", 0);
+  const forceRequireSignature = readBooleanEnv("SPELL_API_FORCE_REQUIRE_SIGNATURE", false);
 
   const started = await startExecutionApiServer({
     port,
@@ -30,7 +31,8 @@ async function main(): Promise<void> {
     authTokens,
     authKeys,
     logRetentionDays,
-    logMaxFiles
+    logMaxFiles,
+    forceRequireSignature
   });
 
   process.stdout.write(`spell execution api listening on :${started.port}\n`);
@@ -82,4 +84,21 @@ function readOptionalCsvEnv(name: string): string[] | undefined {
   }
 
   return values;
+}
+
+function readBooleanEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") {
+    return fallback;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+
+  throw new Error(`${name} must be a boolean (true/false/1/0)`);
 }

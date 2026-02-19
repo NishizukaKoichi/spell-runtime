@@ -33,7 +33,7 @@ This document records stable architecture decisions for Spell Runtime v1.
 
 ## 7. Guard responsibility split
 - runtime enforces: schema, platform, risk/billing flags, connector token presence.
-- backend enforces: role/access policy, button registry mapping, optional signature requirement (`require_signature`), rate/size/timeout controls.
+- backend enforces: role/access policy, button registry mapping, signature policy (`require_signature` and optional global force mode), rate/size/timeout controls.
 - UI enforces: confirmations and clear risk/billing consent UX.
 
 ## 8. Logging safety policy
@@ -43,7 +43,7 @@ This document records stable architecture decisions for Spell Runtime v1.
 
 ## 9. Scope discipline
 v1 intentionally excludes:
-- registry/marketplace
+- registry marketplace/discovery UX
 - real billing execution
 - DAG/parallel/rollback
 - advanced template language
@@ -60,11 +60,12 @@ v1 intentionally excludes:
   - max files (`SPELL_API_LOG_MAX_FILES`, default 500)
 - retention pruning updates both log files and in-memory/indexed execution list for consistency.
 
-## 11. Signature verification (verify-only)
+## 11. Signature verification policy
 - bundles may include `spell.sig.json` (ed25519 signature over bundle digest).
 - trust store is publisher-scoped under `~/.spell/trust/publishers/`.
-- execution can require verified signature via `spell cast --require-signature`.
-- unsigned bundles are allowed by default (no enforcement without the flag).
+- CLI `spell cast` requires a verified signature by default.
+- unsigned execution is an explicit opt-out path via `--allow-unsigned`.
+- Execution API can enforce signature per button (`require_signature=true`) and can force it globally (`SPELL_API_FORCE_REQUIRE_SIGNATURE=true`).
 
 ## 12. Signature authoring UX
 - `spell sign keygen` generates ed25519 keypairs for publishers.

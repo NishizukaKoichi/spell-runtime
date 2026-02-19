@@ -23,6 +23,7 @@ export interface ExecutionApiServerOptions {
   authKeys?: string[];
   logRetentionDays?: number;
   logMaxFiles?: number;
+  forceRequireSignature?: boolean;
 }
 
 type JobStatus = "queued" | "running" | "succeeded" | "failed" | "timeout";
@@ -147,6 +148,7 @@ export async function startExecutionApiServer(
     (options.authTokens ?? []).map((token) => token.trim()).filter((token) => token.length > 0)
   );
   const authKeys = parseAuthKeys(options.authKeys ?? []);
+  const forceRequireSignature = options.forceRequireSignature ?? false;
   if (authTokens.size > 0 && authKeys.length > 0) {
     throw new Error("API auth config error: use either authTokens or authKeys (role-based), not both");
   }
@@ -299,13 +301,14 @@ export async function startExecutionApiServer(
 
         const executionId = `exec_${Date.now()}_${randomUUID().slice(0, 8)}`;
         const now = new Date().toISOString();
+        const requireSignature = forceRequireSignature || entry.require_signature === true;
 
         const job: ExecutionJob = {
           execution_id: executionId,
           button_id: entry.button_id,
           spell_id: entry.spell_id,
           version: entry.version,
-          require_signature: entry.require_signature ?? false,
+          require_signature: requireSignature,
           status: "queued",
           tenant_id: tenantId,
           actor_role: actorRole,
@@ -321,7 +324,7 @@ export async function startExecutionApiServer(
           input,
           parsed.dry_run ?? false,
           entry.required_confirmations,
-          entry.require_signature ?? false,
+          job.require_signature,
           executionTimeoutMs,
           jobs,
           persistJobs,
@@ -358,7 +361,7 @@ export async function startExecutionApiServer(
             version: button.version,
             defaults: button.defaults,
             required_confirmations: button.required_confirmations,
-            require_signature: button.require_signature ?? false,
+            require_signature: forceRequireSignature || button.require_signature === true,
             allowed_roles: button.allowed_roles
           }))
         });

@@ -8,7 +8,7 @@ This spec is for the integration layer around the existing CLI runtime.
 ## 2. Non-goals
 - Add new runtime features to `spell` CLI.
 - Introduce billing execution.
-- Implement Docker execution in v1.
+- Add Docker-specific orchestration policy in the UI layer.
 
 ## 3. Done Definition (Integration)
 A button can safely execute a registered spell with the following behavior:
@@ -48,6 +48,8 @@ Optional fields:
 - `description`
 - `owners`
 - `require_signature`: boolean, when true backend adds `--require-signature`
+  - when false/omitted backend can opt into `--allow-unsigned`
+  - if backend sets `SPELL_API_FORCE_REQUIRE_SIGNATURE=true`, this field is ignored and signature is always required
 
 See sample:
 - `/Users/koichinishizuka/spell-runtime/examples/button-registry.v1.json`
@@ -115,6 +117,8 @@ Given registry entry and request:
    - add `--yes` only when policy and confirmation are satisfied
    - add `--allow-billing` only when policy and confirmation are satisfied
    - add `--require-signature` when `require_signature=true`
+   - if `SPELL_API_FORCE_REQUIRE_SIGNATURE=true`, always add `--require-signature`
+   - otherwise add `--allow-unsigned` only when registry policy allows unsigned path
 5. Execute with `shell=false`.
 6. Parse stdout lines:
    - `execution_id: ...`
@@ -205,4 +209,4 @@ return parseExecution(stdout);
 - Add queue/async job mode for long-running spells.
 - Add workflow status stream (SSE/WebSocket).
 - Add runtime host pool routing by platform.
-- Add signature keygen/sign UX when v2 policy is ready.
+- Add trust/sign key management UI flows for operator onboarding.
