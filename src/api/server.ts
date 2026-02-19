@@ -3,7 +3,7 @@ import { appendFile, mkdtemp, readFile, readdir, rm, stat, writeFile } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { loadButtonRegistryFromFile, resolveButtonEntry, type ButtonRegistryV1 } from "../contract/buttonRegistry";
 import { ensureSpellDirs, logsRoot } from "../util/paths";
 import { renderReceiptsClientJs, renderReceiptsHtml } from "./ui";
@@ -26,7 +26,7 @@ export interface ExecutionApiServerOptions {
   forceRequireSignature?: boolean;
 }
 
-type JobStatus = "queued" | "running" | "succeeded" | "failed" | "timeout";
+type JobStatus = "queued" | "running" | "succeeded" | "failed" | "timeout" | "canceled";
 
 interface ApiAuthKey {
   tenantId: string;
@@ -55,6 +55,11 @@ interface ExecutionJob {
   receipt?: Record<string, unknown>;
   idempotency_key?: string;
   idempotency_fingerprint?: string;
+}
+
+interface ExecutionRuntimeState {
+  cancelRequested: boolean;
+  child: ChildProcessWithoutNullStreams | null;
 }
 
 interface CreateExecutionRequest {
@@ -117,6 +122,7 @@ export async function startExecutionApiServer(
   const postHistoryByTenant = new Map<string, number[]>();
   const runningJobPromises = new Set<Promise<void>>();
   const tenantAuditPath = path.join(logsRoot(), "tenant-audit.jsonl");
+  const runtimeStateByExecutionId = new Map<string, ExecutionRuntimeState>();
   let tenantAuditQueue = Promise.resolve();
   let persistQueue = Promise.resolve();
 
@@ -413,6 +419,7 @@ export async function startExecutionApiServer(
           job.require_signature,
           executionTimeoutMs,
           jobs,
+          runtimeStateByExecutionId,
           persistJobs,
           appendTenantAudit,
           {
@@ -432,6 +439,63 @@ export async function startExecutionApiServer(
           execution_id: executionId,
           tenant_id: job.tenant_id,
           status: job.status
+        });
+      }
+
+      if (method === "POST" && route.startsWith("/spell-executions/") && route.endsWith("/cancel")) {
+        const matched = /^\/spell-executions\/([^/]+)\/cancel$/.exec(route);
+        const executionId = matched && matched[1] ? matched[1].trim() : "";
+        if (!executionId || !/^[a-zA-Z0-9_.-]+$/.test(executionId)) {
+          return sendJson(res, 400, { ok: false, error_code: "INVALID_EXECUTION_ID", message: "invalid execution id" });
+        }
+
+        const existing = jobs.get(executionId);
+        if (!existing) {
+          return sendJson(res, 404, { ok: false, error_code: "EXECUTION_NOT_FOUND", message: "execution not found" });
+        }
+
+        if (authKeys.length > 0 && authContext.ok && authContext.role !== "admin" && authContext.tenantId !== existing.tenant_id) {
+          return sendJson(res, 403, {
+            ok: false,
+            error_code: "TENANT_FORBIDDEN",
+            message: `tenant cancel denied: ${existing.tenant_id}`
+          });
+        }
+
+        if (isTerminalJobStatus(existing.status)) {
+          return sendJson(res, 409, {
+            ok: false,
+            error_code: "ALREADY_TERMINAL",
+            message: `execution already terminal: ${existing.status}`
+          });
+        }
+
+        const runtimeState = runtimeStateByExecutionId.get(executionId) ?? {
+          cancelRequested: false,
+          child: null
+        };
+        runtimeState.cancelRequested = true;
+        runtimeStateByExecutionId.set(executionId, runtimeState);
+        if (existing.status === "running" && runtimeState.child) {
+          runtimeState.child.kill("SIGTERM");
+        }
+
+        const canceled: ExecutionJob = {
+          ...existing,
+          status: "canceled",
+          finished_at: new Date().toISOString(),
+          error_code: "EXECUTION_CANCELED",
+          message: "execution canceled by request"
+        };
+        jobs.set(executionId, canceled);
+        await persistJobs();
+        await appendTenantAudit(canceled).catch(() => undefined);
+
+        return sendJson(res, 200, {
+          ok: true,
+          execution_id: canceled.execution_id,
+          tenant_id: canceled.tenant_id,
+          status: canceled.status
         });
       }
 
@@ -577,6 +641,7 @@ async function runJob(
   requireSignature: boolean,
   executionTimeoutMs: number,
   jobs: Map<string, ExecutionJob>,
+  runtimeStateByExecutionId: Map<string, ExecutionRuntimeState>,
   persistJobs: () => Promise<void>,
   appendTenantAudit: (job: ExecutionJob) => Promise<void>,
   retention: {
@@ -588,122 +653,147 @@ async function runJob(
   const cliPath = path.resolve(process.cwd(), "dist", "cli", "index.js");
   const tempDir = await mkdtemp(path.join(tmpdir(), "spell-exec-api-"));
   const inputPath = path.join(tempDir, "input.json");
-  await writeFile(inputPath, JSON.stringify(input), "utf8");
-
-  const args = [cliPath, "cast", job.spell_id, "--version", job.version, "--input", inputPath];
-  if (dryRun) args.push("--dry-run");
-  if (confirmations.risk) args.push("--yes");
-  if (confirmations.billing) args.push("--allow-billing");
-  if (requireSignature) {
-    args.push("--require-signature");
-  } else {
-    args.push("--allow-unsigned");
-  }
-
-  const running: ExecutionJob = {
-    ...job,
-    status: "running",
-    started_at: new Date().toISOString()
+  const runtimeState = runtimeStateByExecutionId.get(job.execution_id) ?? {
+    cancelRequested: false,
+    child: null
   };
-  jobs.set(job.execution_id, running);
-  await persistJobs();
-  await appendTenantAudit(running).catch(() => undefined);
+  runtimeStateByExecutionId.set(job.execution_id, runtimeState);
 
-  const child = spawn(process.execPath, args, {
-    shell: false,
-    cwd: process.cwd(),
-    env: process.env
-  });
+  try {
+    await writeFile(inputPath, JSON.stringify(input), "utf8");
 
-  let stdout = "";
-  let stderr = "";
-  let timeoutHit = false;
-
-  child.stdout.on("data", (chunk) => {
-    stdout += chunk.toString();
-  });
-
-  child.stderr.on("data", (chunk) => {
-    stderr += chunk.toString();
-  });
-
-  const timer = setTimeout(() => {
-    timeoutHit = true;
-    child.kill("SIGTERM");
-  }, executionTimeoutMs);
-
-  const exitCode = await new Promise<number | null>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("close", resolve);
-  }).catch(() => -1);
-
-  clearTimeout(timer);
-
-  const runtimeExecutionId = findLineValue(stdout, "execution_id:");
-  const runtimeLogPath = findLineValue(stdout, "log:");
-
-  let receipt: Record<string, unknown> | undefined;
-  if (runtimeLogPath) {
-    receipt = await loadSanitizedReceipt(runtimeLogPath).catch(() => undefined);
-    if (receipt) {
-      receipt = {
-        ...receipt,
-        tenant_id: job.tenant_id
-      };
+    const args = [cliPath, "cast", job.spell_id, "--version", job.version, "--input", inputPath];
+    if (dryRun) args.push("--dry-run");
+    if (confirmations.risk) args.push("--yes");
+    if (confirmations.billing) args.push("--allow-billing");
+    if (requireSignature) {
+      args.push("--require-signature");
+    } else {
+      args.push("--allow-unsigned");
     }
-  }
 
-  const finishedBase: ExecutionJob = {
-    ...running,
-    finished_at: new Date().toISOString(),
-    runtime_execution_id: runtimeExecutionId,
-    runtime_log_path: runtimeLogPath,
-    receipt
-  };
+    if (isCancellationRequested(jobs, runtimeStateByExecutionId, job.execution_id)) {
+      return;
+    }
 
-  if (timeoutHit) {
-    const timedOut: ExecutionJob = {
-      ...finishedBase,
-      status: "timeout",
-      error_code: "EXECUTION_TIMEOUT",
-      message: `execution exceeded timeout ${executionTimeoutMs}ms`
+    const running: ExecutionJob = {
+      ...job,
+      status: "running",
+      started_at: new Date().toISOString()
     };
-    jobs.set(job.execution_id, timedOut);
+    jobs.set(job.execution_id, running);
     await persistJobs();
-    await appendTenantAudit(timedOut).catch(() => undefined);
-    await applyLogRetentionAndPersist(retention, jobs, persistJobs);
-    await rm(tempDir, { recursive: true, force: true });
-    return;
-  }
+    await appendTenantAudit(running).catch(() => undefined);
 
-  if (exitCode === 0) {
-    const succeeded: ExecutionJob = {
-      ...finishedBase,
-      status: "succeeded",
-      message: "completed"
+    if (isCancellationRequested(jobs, runtimeStateByExecutionId, job.execution_id)) {
+      return;
+    }
+
+    const child = spawn(process.execPath, args, {
+      shell: false,
+      cwd: process.cwd(),
+      env: process.env
+    });
+    runtimeState.child = child;
+    if (runtimeState.cancelRequested) {
+      child.kill("SIGTERM");
+    }
+
+    let stdout = "";
+    let stderr = "";
+    let timeoutHit = false;
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    const timer = setTimeout(() => {
+      timeoutHit = true;
+      child.kill("SIGTERM");
+    }, executionTimeoutMs);
+
+    const exitCode = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    }).catch(() => -1);
+
+    clearTimeout(timer);
+    runtimeState.child = null;
+
+    const runtimeExecutionId = findLineValue(stdout, "execution_id:");
+    const runtimeLogPath = findLineValue(stdout, "log:");
+
+    let receipt: Record<string, unknown> | undefined;
+    if (runtimeLogPath) {
+      receipt = await loadSanitizedReceipt(runtimeLogPath).catch(() => undefined);
+      if (receipt) {
+        receipt = {
+          ...receipt,
+          tenant_id: job.tenant_id
+        };
+      }
+    }
+
+    const finishedBase: ExecutionJob = {
+      ...running,
+      finished_at: new Date().toISOString(),
+      runtime_execution_id: runtimeExecutionId,
+      runtime_log_path: runtimeLogPath,
+      receipt
     };
-    jobs.set(job.execution_id, succeeded);
+
+    if (isCancellationRequested(jobs, runtimeStateByExecutionId, job.execution_id)) {
+      return;
+    }
+
+    if (timeoutHit) {
+      const timedOut: ExecutionJob = {
+        ...finishedBase,
+        status: "timeout",
+        error_code: "EXECUTION_TIMEOUT",
+        message: `execution exceeded timeout ${executionTimeoutMs}ms`
+      };
+      jobs.set(job.execution_id, timedOut);
+      await persistJobs();
+      await appendTenantAudit(timedOut).catch(() => undefined);
+      await applyLogRetentionAndPersist(retention, jobs, persistJobs);
+      return;
+    }
+
+    if (exitCode === 0) {
+      const succeeded: ExecutionJob = {
+        ...finishedBase,
+        status: "succeeded",
+        message: "completed"
+      };
+      jobs.set(job.execution_id, succeeded);
+      await persistJobs();
+      await appendTenantAudit(succeeded).catch(() => undefined);
+      await applyLogRetentionAndPersist(retention, jobs, persistJobs);
+      return;
+    }
+
+    const mapped = mapRuntimeError(stderr || stdout);
+    const status: JobStatus = mapped.code === "EXECUTION_TIMEOUT" ? "timeout" : "failed";
+    const failed: ExecutionJob = {
+      ...finishedBase,
+      status,
+      error_code: mapped.code,
+      message: mapped.message
+    };
+    jobs.set(job.execution_id, failed);
     await persistJobs();
-    await appendTenantAudit(succeeded).catch(() => undefined);
+    await appendTenantAudit(failed).catch(() => undefined);
     await applyLogRetentionAndPersist(retention, jobs, persistJobs);
+  } finally {
+    runtimeState.child = null;
+    runtimeStateByExecutionId.delete(job.execution_id);
     await rm(tempDir, { recursive: true, force: true });
-    return;
   }
-
-  const mapped = mapRuntimeError(stderr || stdout);
-  const status: JobStatus = mapped.code === "EXECUTION_TIMEOUT" ? "timeout" : "failed";
-  const failed: ExecutionJob = {
-    ...finishedBase,
-    status,
-    error_code: mapped.code,
-    message: mapped.message
-  };
-  jobs.set(job.execution_id, failed);
-  await persistJobs();
-  await appendTenantAudit(failed).catch(() => undefined);
-  await applyLogRetentionAndPersist(retention, jobs, persistJobs);
-
-  await rm(tempDir, { recursive: true, force: true });
 }
 
 function summarizeJob(job: ExecutionJob): Record<string, unknown> {
@@ -1090,7 +1180,18 @@ function matchJobByQuery(job: ExecutionJob, query: ListExecutionsQuery): boolean
 }
 
 function isJobStatus(value: string): value is JobStatus {
-  return value === "queued" || value === "running" || value === "succeeded" || value === "failed" || value === "timeout";
+  return (
+    value === "queued" ||
+    value === "running" ||
+    value === "succeeded" ||
+    value === "failed" ||
+    value === "timeout" ||
+    value === "canceled"
+  );
+}
+
+function isTerminalJobStatus(status: JobStatus): boolean {
+  return status === "succeeded" || status === "failed" || status === "timeout" || status === "canceled";
 }
 
 function requiresApiAuth(route: string): boolean {
@@ -1498,6 +1599,18 @@ function normalizeTenantId(value: unknown): string {
     return DEFAULT_TENANT_ID;
   }
   return tenantId;
+}
+
+function isCancellationRequested(
+  jobs: Map<string, ExecutionJob>,
+  runtimeStateByExecutionId: Map<string, ExecutionRuntimeState>,
+  executionId: string
+): boolean {
+  const job = jobs.get(executionId);
+  if (job?.status === "canceled") {
+    return true;
+  }
+  return runtimeStateByExecutionId.get(executionId)?.cancelRequested === true;
 }
 
 function summarizeTenantUsage(

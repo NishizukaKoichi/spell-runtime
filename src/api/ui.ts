@@ -81,7 +81,7 @@ export function renderReceiptsHtml(): string {
     }
     .status { font-weight: 700; }
     .status.succeeded { color: var(--ok); }
-    .status.failed, .status.timeout { color: var(--err); }
+    .status.failed, .status.timeout, .status.canceled { color: var(--err); }
     .status.running, .status.queued { color: var(--warn); }
     .pill {
       display: inline-block;
@@ -130,7 +130,7 @@ export function renderReceiptsHtml(): string {
 
     <section class="panel" id="executionsPanel">
       <h2>Executions</h2>
-      <div class="hint">Shows queued/running/succeeded/failed, with API filters.</div>
+      <div class="hint">Shows queued/running/succeeded/failed/timeout/canceled, with API filters.</div>
       <div class="row" style="margin-bottom:10px">
         <div style="width:200px">
           <label>status filter</label>
@@ -141,6 +141,7 @@ export function renderReceiptsHtml(): string {
             <option value="succeeded">succeeded</option>
             <option value="failed">failed</option>
             <option value="timeout">timeout</option>
+            <option value="canceled">canceled</option>
           </select>
         </div>
         <div style="width:120px">
@@ -425,7 +426,10 @@ export function renderReceiptsClientJs(): string {
     "      '<div class=\"status ' + escapeHtml(execution.status) + '\">' + escapeHtml(execution.status) + '</div>',",
     "      '<div class=\"hint\">' + escapeHtml(execution.execution_id) + '</div>',",
     "      '<div class=\"hint\">' + escapeHtml(execution.button_id) + ' -> ' + escapeHtml(execution.spell_id) + '@' + escapeHtml(execution.version) + '</div>',",
-    "      '<div><button data-exec-id=\"' + escapeHtml(execution.execution_id) + '\">View</button></div>'",
+    "      '<div>' +",
+    "        '<button data-exec-id=\"' + escapeHtml(execution.execution_id) + '\">View</button>' +",
+    "        (canCancelExecution(execution.status) ? ' <button class=\"secondary\" data-cancel-id=\"' + escapeHtml(execution.execution_id) + '\">Cancel</button>' : '') +",
+    "      '</div>'",
     "    ].join('');",
     "    el.executions.appendChild(card);",
     "  }",
@@ -437,6 +441,29 @@ export function renderReceiptsClientJs(): string {
     "      loadExecutionDetail(id);",
     "    });",
     "  }",
+    "",
+    "  for (const button of el.executions.querySelectorAll('button[data-cancel-id]')) {",
+    "    button.addEventListener('click', async () => {",
+    "      const id = button.getAttribute('data-cancel-id');",
+    "      if (!id) return;",
+    "      await cancelExecution(id);",
+    "    });",
+    "  }",
+    "}",
+    "",
+    "function canCancelExecution(status) {",
+    "  return status === 'queued' || status === 'running';",
+    "}",
+    "",
+    "async function cancelExecution(executionId) {",
+    "  const res = await fetch('/api/spell-executions/' + encodeURIComponent(executionId) + '/cancel', {",
+    "    method: 'POST',",
+    "    headers: makeApiHeaders(false)",
+    "  });",
+    "  const payload = await res.json();",
+    "  setLastResponse(payload);",
+    "  state.selectedExecutionId = executionId;",
+    "  await loadExecutions();",
     "}",
     "",
     "async function loadExecutionDetail(executionId) {",

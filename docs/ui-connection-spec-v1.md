@@ -62,6 +62,7 @@ See sample:
 - `GET /api/buttons`
 - `GET /api/spell-executions` (query: `status`, `button_id`, `tenant_id`, `limit`)
 - `GET /api/spell-executions/:execution_id`
+- `POST /api/spell-executions/:execution_id/cancel`
 - `GET /` (minimal receipts UI)
 - `GET /ui/app.js` (UI client script)
 
@@ -127,6 +128,24 @@ Response (failure):
 
 ## 6.2 GET /api/spell-executions/:execution_id
 Returns execution summary and sanitized receipt (no raw stdout/stderr).
+
+Execution status values:
+- `queued`
+- `running`
+- `succeeded`
+- `failed`
+- `timeout`
+- `canceled`
+
+## 6.3 POST /api/spell-executions/:execution_id/cancel
+Cancels queued/running executions.
+
+Behavior:
+- unknown `execution_id`: `404 EXECUTION_NOT_FOUND`
+- queued: mark execution `canceled` immediately
+- running: terminate child process and mark execution `canceled`
+- already terminal (`succeeded`/`failed`/`timeout`/`canceled`): `409 ALREADY_TERMINAL`
+- when auth keys are enabled, non-admin keys cannot cancel other tenant jobs (`403 TENANT_FORBIDDEN`)
 
 Execution list state is persisted at `~/.spell/logs/index.json` so lists survive API restarts.
 Idempotency key mappings for executions are persisted in that same index file and survive API restarts.

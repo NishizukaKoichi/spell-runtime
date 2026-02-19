@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -106,6 +106,8 @@ describe("execution api integration", () => {
       expect(script).toContain("actor role not allowed for selected button");
       expect(script).toContain("Allowed tenants");
       expect(script).toContain("makeApiHeaders");
+      expect(script).toContain("data-cancel-id");
+      expect(script).toContain("/cancel");
     } finally {
       await server.close();
     }
@@ -191,6 +193,166 @@ describe("execution api integration", () => {
       expect(invalid.status).toBe(400);
       const invalidPayload = (await invalid.json()) as Record<string, unknown>;
       expect(invalidPayload.error_code).toBe("INVALID_QUERY");
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("POST /api/spell-executions/:execution_id/cancel cancels queued executions", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json")
+    });
+
+    try {
+      const created = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "call_webhook_demo",
+          actor_role: "admin",
+          dry_run: true,
+          input: {
+            payload: {
+              blob: "x".repeat(48_000)
+            }
+          }
+        })
+      });
+      expect(created.status).toBe(202);
+      const createdPayload = (await created.json()) as Record<string, unknown>;
+      expect(createdPayload.status).toBe("queued");
+      const executionId = String(createdPayload.execution_id);
+
+      const canceled = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions/${executionId}/cancel`, {
+        method: "POST"
+      });
+      expect(canceled.status).toBe(200);
+      const canceledPayload = (await canceled.json()) as Record<string, unknown>;
+      expect(canceledPayload.status).toBe("canceled");
+
+      const done = await waitForExecution(server.port, executionId);
+      expect(done.execution.status).toBe("canceled");
+
+      const listed = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions?status=canceled`);
+      expect(listed.status).toBe(200);
+      const listedPayload = (await listed.json()) as {
+        executions: Array<{ execution_id: string; status: string }>;
+      };
+      expect(listedPayload.executions.some((execution) => execution.execution_id === executionId)).toBe(true);
+      expect(listedPayload.executions.every((execution) => execution.status === "canceled")).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("POST /api/spell-executions/:execution_id/cancel terminates running executions", async () => {
+    const bundleDir = await createHostShellBundle("tests/cancel-running", [
+      {
+        name: "slow",
+        fileName: "slow.js",
+        source: "#!/usr/bin/env node\nsetTimeout(() => { process.stdout.write('done\\n'); }, 1500);\n"
+      }
+    ]);
+    const registryDir = await mkdtemp(path.join(tmpdir(), "spell-api-registry-"));
+    const registryPath = path.join(registryDir, "button-registry.v1.json");
+
+    const baseRegistryRaw = await readFile(path.join(process.cwd(), "examples/button-registry.v1.json"), "utf8");
+    const baseRegistry = JSON.parse(baseRegistryRaw) as {
+      version: "v1";
+      buttons: Array<Record<string, unknown>>;
+    };
+    await writeFile(
+      registryPath,
+      `${JSON.stringify(
+        {
+          version: baseRegistry.version,
+          buttons: [
+            ...baseRegistry.buttons,
+            {
+              button_id: "cancel_running_demo",
+              label: "Cancel Running Demo",
+              description: "Fixture for canceling running execution",
+              spell_id: "tests/cancel-running",
+              version: "1.0.0",
+              defaults: {
+                name: "world"
+              },
+              required_confirmations: {
+                risk: false,
+                billing: false
+              },
+              require_signature: false,
+              allowed_roles: ["admin", "operator"]
+            }
+          ]
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    expect(await runCli(["node", "spell", "install", bundleDir])).toBe(0);
+
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath,
+      executionTimeoutMs: 10_000
+    });
+
+    try {
+      const created = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "cancel_running_demo",
+          actor_role: "admin"
+        })
+      });
+      expect(created.status).toBe(202);
+      const createdPayload = (await created.json()) as Record<string, unknown>;
+      const executionId = String(createdPayload.execution_id);
+
+      await waitForExecutionStatus(server.port, executionId, "running");
+
+      const canceled = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions/${executionId}/cancel`, {
+        method: "POST"
+      });
+      expect(canceled.status).toBe(200);
+      const canceledPayload = (await canceled.json()) as Record<string, unknown>;
+      expect(canceledPayload.status).toBe("canceled");
+
+      const done = await waitForExecution(server.port, executionId);
+      expect(done.execution.status).toBe("canceled");
+    } finally {
+      await server.close();
+      await rm(bundleDir, { recursive: true, force: true });
+      await rm(registryDir, { recursive: true, force: true });
+    }
+  });
+
+  test("POST /api/spell-executions/:execution_id/cancel returns ALREADY_TERMINAL for terminal execution", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json")
+    });
+
+    try {
+      const executionId = await createExecution(server.port, {
+        button_id: "publish_site_high_risk",
+        actor_role: "admin",
+        confirmation: { risk_acknowledged: true }
+      });
+      const done = await waitForExecution(server.port, executionId);
+      expect(done.execution.status).toBe("succeeded");
+
+      const canceled = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions/${executionId}/cancel`, {
+        method: "POST"
+      });
+      expect(canceled.status).toBe(409);
+      const canceledPayload = (await canceled.json()) as Record<string, unknown>;
+      expect(canceledPayload.error_code).toBe("ALREADY_TERMINAL");
     } finally {
       await server.close();
     }
@@ -535,6 +697,102 @@ describe("execution api integration", () => {
       expect(crossTenantPayload.executions.every((execution) => execution.tenant_id === "team_b")).toBe(true);
     } finally {
       await server.close();
+    }
+  });
+
+  test("POST /api/spell-executions/:execution_id/cancel forbids non-admin cross-tenant cancel with auth keys", async () => {
+    const bundleDir = await createHostShellBundle("tests/cancel-tenant-scope", [
+      {
+        name: "slow",
+        fileName: "slow.js",
+        source: "#!/usr/bin/env node\nsetTimeout(() => { process.stdout.write('done\\n'); }, 1500);\n"
+      }
+    ]);
+    const registryDir = await mkdtemp(path.join(tmpdir(), "spell-api-registry-"));
+    const registryPath = path.join(registryDir, "button-registry.v1.json");
+
+    const baseRegistryRaw = await readFile(path.join(process.cwd(), "examples/button-registry.v1.json"), "utf8");
+    const baseRegistry = JSON.parse(baseRegistryRaw) as {
+      version: "v1";
+      buttons: Array<Record<string, unknown>>;
+    };
+    await writeFile(
+      registryPath,
+      `${JSON.stringify(
+        {
+          version: baseRegistry.version,
+          buttons: [
+            ...baseRegistry.buttons,
+            {
+              button_id: "cancel_tenant_scope_demo",
+              label: "Cancel Tenant Scope Demo",
+              description: "Fixture for tenant-scoped cancel",
+              spell_id: "tests/cancel-tenant-scope",
+              version: "1.0.0",
+              defaults: {
+                name: "world"
+              },
+              required_confirmations: {
+                risk: false,
+                billing: false
+              },
+              require_signature: false,
+              allowed_roles: ["admin", "operator"]
+            }
+          ]
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    expect(await runCli(["node", "spell", "install", bundleDir])).toBe(0);
+
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath,
+      executionTimeoutMs: 10_000,
+      authKeys: ["team_a:operator=team-a-op-token", "team_b:operator=team-b-op-token"]
+    });
+
+    try {
+      const created = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-b-op-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "cancel_tenant_scope_demo",
+          actor_role: "admin"
+        })
+      });
+      expect(created.status).toBe(202);
+      const createdPayload = (await created.json()) as Record<string, unknown>;
+      const executionId = String(createdPayload.execution_id);
+
+      await waitForExecutionStatus(server.port, executionId, "running", "team-b-op-token");
+
+      const forbidden = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions/${executionId}/cancel`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-a-op-token" }
+      });
+      expect(forbidden.status).toBe(403);
+      const forbiddenPayload = (await forbidden.json()) as Record<string, unknown>;
+      expect(forbiddenPayload.error_code).toBe("TENANT_FORBIDDEN");
+
+      const allowed = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions/${executionId}/cancel`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-b-op-token" }
+      });
+      expect(allowed.status).toBe(200);
+      const allowedPayload = (await allowed.json()) as Record<string, unknown>;
+      expect(allowedPayload.status).toBe("canceled");
+
+      const done = await waitForExecution(server.port, executionId, "team-b-op-token");
+      expect(done.execution.status).toBe("canceled");
+    } finally {
+      await server.close();
+      await rm(bundleDir, { recursive: true, force: true });
+      await rm(registryDir, { recursive: true, force: true });
     }
   });
 
@@ -962,7 +1220,7 @@ async function waitForExecution(
     if (response.status === 200) {
       const payload = (await response.json()) as { execution: Record<string, unknown>; receipt: unknown };
       const status = payload.execution.status;
-      if (status === "succeeded" || status === "failed" || status === "timeout") {
+      if (status === "succeeded" || status === "failed" || status === "timeout" || status === "canceled") {
         return payload;
       }
     }
@@ -971,6 +1229,38 @@ async function waitForExecution(
   }
 
   throw new Error("execution did not finish in time");
+}
+
+async function waitForExecutionStatus(
+  port: number,
+  executionId: string,
+  expectedStatus: string,
+  token?: string
+): Promise<void> {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    const response = await fetch(`http://127.0.0.1:${port}/api/spell-executions/${executionId}`, {
+      headers: token ? { authorization: `Bearer ${token}` } : undefined
+    });
+    if (response.status !== 200) {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      continue;
+    }
+
+    const payload = (await response.json()) as { execution: { status?: string } };
+    const status = String(payload.execution.status ?? "");
+    if (status === expectedStatus) {
+      return;
+    }
+
+    if (status === "succeeded" || status === "failed" || status === "timeout" || status === "canceled") {
+      throw new Error(`execution reached terminal status ${status} before ${expectedStatus}`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
+
+  throw new Error(`execution did not reach status ${expectedStatus} in time`);
 }
 
 async function waitForTenantAuditStatuses(
@@ -1028,4 +1318,73 @@ async function createExecution(
   expect(response.status).toBe(202);
   const payload = (await response.json()) as Record<string, unknown>;
   return String(payload.execution_id);
+}
+
+async function createHostShellBundle(
+  spellId: string,
+  steps: Array<{ name: string; fileName: string; source: string }>
+): Promise<string> {
+  const bundleDir = await mkdtemp(path.join(tmpdir(), "spell-cancel-bundle-"));
+  const stepsDir = path.join(bundleDir, "steps");
+  await mkdir(stepsDir, { recursive: true });
+
+  for (const step of steps) {
+    const stepPath = path.join(stepsDir, step.fileName);
+    await writeFile(stepPath, step.source, "utf8");
+    await chmod(stepPath, 0o755);
+  }
+
+  await writeFile(
+    path.join(bundleDir, "schema.json"),
+    JSON.stringify(
+      {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+        additionalProperties: true
+      },
+      null,
+      2
+    ) + "\n",
+    "utf8"
+  );
+
+  const manifestLines: string[] = [
+    `id: ${spellId}`,
+    "version: 1.0.0",
+    "name: Cancel Fixture",
+    "summary: cancel fixture",
+    "inputs_schema: ./schema.json",
+    "risk: low",
+    "permissions: []",
+    "effects:",
+    "  - type: notify",
+    "    target: stdout",
+    "    mutates: false",
+    "billing:",
+    "  enabled: false",
+    "  mode: none",
+    "  currency: USD",
+    "  max_amount: 0",
+    "runtime:",
+    "  execution: host",
+    "  platforms:",
+    `    - ${process.platform}/${process.arch}`,
+    "steps:"
+  ];
+
+  for (const step of steps) {
+    manifestLines.push("  - uses: shell");
+    manifestLines.push(`    name: ${step.name}`);
+    manifestLines.push(`    run: steps/${step.fileName}`);
+  }
+
+  manifestLines.push("checks:");
+  manifestLines.push("  - type: exit_code");
+  manifestLines.push("    params: {}");
+  manifestLines.push("");
+
+  await writeFile(path.join(bundleDir, "spell.yaml"), manifestLines.join("\n"), "utf8");
+  return bundleDir;
 }
