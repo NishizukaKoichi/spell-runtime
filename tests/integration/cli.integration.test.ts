@@ -500,6 +500,11 @@ describe("spell cli integration", () => {
     expect(listInitial.stdout).toContain("publisher\tkey_id\tstatus");
     expect(listInitial.stdout).toContain("trust-lifecycle\tk1\tactive");
 
+    const inspectInitial = await runCliCapture(["node", "spell", "trust", "inspect", "trust-lifecycle"]);
+    expect(inspectInitial.code).toBe(0);
+    expect(inspectInitial.stdout).toContain("key_id\tstatus\talgorithm\tfingerprint");
+    expect(inspectInitial.stdout).toMatch(/k1\tactive\ted25519\t[0-9a-f]{12}\.\.\.[0-9a-f]{8}/);
+
     const revoke = await runCliCapture([
       "node",
       "spell",
@@ -518,6 +523,10 @@ describe("spell cli integration", () => {
     expect(listRevoked.code).toBe(0);
     expect(listRevoked.stdout).toContain("trust-lifecycle\tk1\trevoked");
 
+    const inspectRevoked = await runCliCapture(["node", "spell", "trust", "inspect", "trust-lifecycle"]);
+    expect(inspectRevoked.code).toBe(0);
+    expect(inspectRevoked.stdout).toMatch(/k1\trevoked\ted25519\t[0-9a-f]{12}\.\.\.[0-9a-f]{8}/);
+
     const restore = await runCliCapture([
       "node",
       "spell",
@@ -533,6 +542,40 @@ describe("spell cli integration", () => {
     const listRestored = await runCliCapture(["node", "spell", "trust", "list"]);
     expect(listRestored.code).toBe(0);
     expect(listRestored.stdout).toContain("trust-lifecycle\tk1\tactive");
+  });
+
+  test("trust remove-key removes one key and deletes publisher trust on last key", async () => {
+    const { publicKey } = generateKeyPairSync("ed25519");
+    const publicKeyDer = publicKey.export({ format: "der", type: "spki" }) as Buffer;
+    const encoded = publicKeyDer.toString("base64url");
+
+    expect(await runCli(["node", "spell", "trust", "add", "trust-remove", encoded, "--key-id", "k1"])).toBe(0);
+    expect(await runCli(["node", "spell", "trust", "add", "trust-remove", encoded, "--key-id", "k2"])).toBe(0);
+
+    const removeK1 = await runCliCapture(["node", "spell", "trust", "remove-key", "trust-remove", "--key-id", "k1"]);
+    expect(removeK1.code).toBe(0);
+    expect(removeK1.stdout).toContain("removed publisher=trust-remove key_id=k1");
+
+    const inspectAfterK1 = await runCliCapture(["node", "spell", "trust", "inspect", "trust-remove"]);
+    expect(inspectAfterK1.code).toBe(0);
+    expect(inspectAfterK1.stdout).not.toContain("k1\t");
+    expect(inspectAfterK1.stdout).toContain("k2\tactive\ted25519\t");
+
+    const missingKey = await runCliCapture(["node", "spell", "trust", "remove-key", "trust-remove", "--key-id", "missing"]);
+    expect(missingKey.code).toBe(1);
+    expect(missingKey.stderr).toContain("trusted key not found: publisher=trust-remove key_id=missing");
+
+    const removeK2 = await runCliCapture(["node", "spell", "trust", "remove-key", "trust-remove", "--key-id", "k2"]);
+    expect(removeK2.code).toBe(0);
+    expect(removeK2.stdout).toContain("removed publisher=trust-remove key_id=k2");
+
+    const inspectMissingPublisher = await runCliCapture(["node", "spell", "trust", "inspect", "trust-remove"]);
+    expect(inspectMissingPublisher.code).toBe(1);
+    expect(inspectMissingPublisher.stderr).toContain("trusted publisher not found: trust-remove");
+
+    const missingPublisher = await runCliCapture(["node", "spell", "trust", "remove-key", "trust-remove", "--key-id", "k2"]);
+    expect(missingPublisher.code).toBe(1);
+    expect(missingPublisher.stderr).toContain("trusted publisher not found: trust-remove");
   });
 
   test("billing guard blocks without --allow-billing", async () => {

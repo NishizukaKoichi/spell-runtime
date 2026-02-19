@@ -154,6 +154,37 @@ export async function restoreTrustedPublisherKey(
   }));
 }
 
+export async function removeTrustedPublisherKey(
+  publisher: string,
+  keyId: string
+): Promise<PublisherTrustKeyV1> {
+  const trust = await loadPublisherTrust(publisher);
+  if (!trust) {
+    throw new SpellError(`trusted publisher not found: ${publisher}`);
+  }
+
+  const index = trust.keys.findIndex((entry) => entry.key_id === keyId);
+  if (index < 0) {
+    throw new SpellError(`trusted key not found: publisher=${publisher} key_id=${keyId}`);
+  }
+
+  const removed = trust.keys[index];
+  const remaining = trust.keys.filter((entry) => entry.key_id !== keyId);
+
+  if (remaining.length === 0) {
+    await rm(publisherTrustFilePath(publisher), { force: true });
+    return removed;
+  }
+
+  await writePublisherTrust({
+    version: "v1",
+    publisher,
+    keys: remaining
+  });
+
+  return removed;
+}
+
 export async function removeTrustedPublisher(publisher: string): Promise<boolean> {
   const filePath = publisherTrustFilePath(publisher);
   const existed = await access(filePath).then(() => true).catch(() => false);

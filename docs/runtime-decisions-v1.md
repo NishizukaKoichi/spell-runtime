@@ -63,7 +63,8 @@ v1 intentionally excludes:
 ## 11. Signature verification policy
 - bundles may include `spell.sig.json` (ed25519 signature over bundle digest).
 - trust store is publisher-scoped under `~/.spell/trust/publishers/`.
-- trust keys are lifecycle-managed per key id (active/revoked) without deleting publisher trust records.
+- trust keys are lifecycle-managed per key id (active/revoked) and can be removed individually.
+- when the last key for a publisher is removed, the publisher trust file is deleted.
 - signature verification ignores revoked keys; signatures referencing revoked key ids fail clearly.
 - CLI `spell cast` requires a verified signature by default.
 - unsigned execution is an explicit opt-out path via `--allow-unsigned`.
@@ -75,6 +76,8 @@ v1 intentionally excludes:
 - public keys are registered via `spell trust add`.
 - `spell trust revoke-key` and `spell trust restore-key` change per-key trust status without removing the publisher trust file.
 - `spell trust list` reports per-key status (`active` or `revoked`).
+- `spell trust inspect` reports `key_id`, `status`, `algorithm`, and a shortened public key fingerprint per key.
+- `spell trust remove-key` removes one key by `key_id`; removing the final key deletes that publisher trust file.
 
 ## 13. Runtime policy management CLI
 - `~/.spell/policy.json` remains the runtime policy source of truth for cast preflight.

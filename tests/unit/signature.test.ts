@@ -7,6 +7,7 @@ import { computeBundleDigest } from "../../src/signature/bundleDigest";
 import {
   loadPublisherTrust,
   publisherTrustFilePath,
+  removeTrustedPublisherKey,
   restoreTrustedPublisherKey,
   revokeTrustedPublisherKey,
   upsertTrustedPublisherKey
@@ -183,6 +184,60 @@ describe("signature", () => {
     expect(loaded?.keys[0]?.revoked).toBe(false);
     expect(loaded?.keys[0]?.revoked_at).toBeUndefined();
     expect(loaded?.keys[0]?.revoke_reason).toBeUndefined();
+  });
+
+  test("removeTrustedPublisherKey removes only the target key and keeps publisher trust", async () => {
+    const publisher = "rotation";
+
+    await upsertTrustedPublisherKey(publisher, {
+      key_id: "k1",
+      algorithm: "ed25519",
+      public_key: "AAAA"
+    });
+    await upsertTrustedPublisherKey(publisher, {
+      key_id: "k2",
+      algorithm: "ed25519",
+      public_key: "BBBB"
+    });
+
+    const removed = await removeTrustedPublisherKey(publisher, "k1");
+    expect(removed.key_id).toBe("k1");
+
+    const trust = await loadPublisherTrust(publisher);
+    expect(trust).not.toBeNull();
+    expect(trust?.keys.map((entry) => entry.key_id)).toEqual(["k2"]);
+  });
+
+  test("removeTrustedPublisherKey removes publisher trust file when last key is deleted", async () => {
+    const publisher = "single-key";
+
+    await upsertTrustedPublisherKey(publisher, {
+      key_id: "k1",
+      algorithm: "ed25519",
+      public_key: "AAAA"
+    });
+
+    const removed = await removeTrustedPublisherKey(publisher, "k1");
+    expect(removed.key_id).toBe("k1");
+
+    const trust = await loadPublisherTrust(publisher);
+    expect(trust).toBeNull();
+  });
+
+  test("removeTrustedPublisherKey fails clearly for missing publisher or key", async () => {
+    await expect(removeTrustedPublisherKey("missing-publisher", "k1")).rejects.toThrow(
+      "trusted publisher not found: missing-publisher"
+    );
+
+    await upsertTrustedPublisherKey("missing-key", {
+      key_id: "k1",
+      algorithm: "ed25519",
+      public_key: "AAAA"
+    });
+
+    await expect(removeTrustedPublisherKey("missing-key", "k2")).rejects.toThrow(
+      "trusted key not found: publisher=missing-key key_id=k2"
+    );
   });
 
   test("revoke/restore trusted key blocks and restores signature verification", async () => {

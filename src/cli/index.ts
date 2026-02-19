@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createPublicKey } from "node:crypto";
+import { createHash, createPublicKey } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Command } from "commander";
@@ -11,7 +11,9 @@ import { castSpell } from "../runner/cast";
 import { inspectLicense, listLicenses, removeLicense, restoreLicense, revokeLicense, upsertLicense } from "../license/store";
 import { loadRuntimePolicy, parseRuntimePolicyFile, runtimePolicyFilePath } from "../policy";
 import {
+  loadPublisherTrust,
   listTrustedPublishers,
+  removeTrustedPublisherKey,
   removeTrustedPublisher,
   restoreTrustedPublisherKey,
   revokeTrustedPublisherKey,
@@ -401,6 +403,25 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
     });
 
   trust
+    .command("inspect")
+    .description("Inspect trusted keys for a publisher")
+    .argument("<publisher>", "Publisher (id prefix before first slash)")
+    .action(async (publisher: string) => {
+      const trustRecord = await loadPublisherTrust(publisher);
+      if (!trustRecord) {
+        throw new SpellError(`trusted publisher not found: ${publisher}`);
+      }
+
+      process.stdout.write("key_id\tstatus\talgorithm\tfingerprint\n");
+      for (const key of trustRecord.keys) {
+        const status = key.revoked === true ? "revoked" : "active";
+        process.stdout.write(
+          `${key.key_id}\t${status}\t${key.algorithm}\t${shortenPublicKeyFingerprint(key.public_key)}\n`
+        );
+      }
+    });
+
+  trust
     .command("revoke-key")
     .description("Revoke a trusted publisher key without deleting publisher trust")
     .argument("<publisher>", "Publisher (id prefix before first slash)")
@@ -419,6 +440,16 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
     .action(async (publisher: string, options: { keyId: string }) => {
       const restored = await restoreTrustedPublisherKey(publisher, options.keyId);
       process.stdout.write(`restored publisher=${publisher} key_id=${restored.key_id}\n`);
+    });
+
+  trust
+    .command("remove-key")
+    .description("Remove one trusted publisher key")
+    .argument("<publisher>", "Publisher (id prefix before first slash)")
+    .requiredOption("--key-id <id>", "Key id")
+    .action(async (publisher: string, options: { keyId: string }) => {
+      const removed = await removeTrustedPublisherKey(publisher, options.keyId);
+      process.stdout.write(`removed publisher=${publisher} key_id=${removed.key_id}\n`);
     });
 
   trust
@@ -463,6 +494,12 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
 
 function collectParams(value: string, previous: string[]): string[] {
   return [...previous, value];
+}
+
+function shortenPublicKeyFingerprint(publicKeyBase64Url: string): string {
+  const decoded = Buffer.from(publicKeyBase64Url, "base64url");
+  const fingerprint = createHash("sha256").update(decoded).digest("hex");
+  return `${fingerprint.slice(0, 12)}...${fingerprint.slice(-8)}`;
 }
 
 if (require.main === module) {
