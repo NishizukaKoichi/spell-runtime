@@ -383,7 +383,7 @@ Defaults:
   GET /ui/app.js
   GET /api/buttons (includes allowed_tenants for each button; null when unrestricted)
   GET /api/spell-executions (status/button_id/tenant_id/limit query supported)
-  POST /api/spell-executions
+  POST /api/spell-executions (supports optional Idempotency-Key header)
   GET /api/spell-executions/:execution_id
   GET /api/tenants/:tenant_id/usage
 
@@ -408,6 +408,9 @@ Security note:
 - execution logs redact secret-like keys (token, authorization, apiKey, etc.)
 - environment-derived secret values are masked in persisted logs
 - tenant audit events (queued/running/succeeded/failed/timeout) are appended as JSONL records to ~/.spell/logs/tenant-audit.jsonl
+- POST /api/spell-executions accepts optional Idempotency-Key (printable ASCII, trimmed length 1..128)
+- idempotency scope is tenant_id + idempotency_key; replay with same effective request returns existing execution with idempotent_replay: true
+- reuse of the same idempotency key with a different effective request returns 409 IDEMPOTENCY_CONFLICT
 - when auth is enabled, pass Authorization: Bearer <token> (or x-api-key) for /api routes
 - with SPELL_API_AUTH_KEYS, non-admin list requests are restricted to their own tenant and cross-tenant tenant_id filters return 403 (TENANT_FORBIDDEN)
 - with SPELL_API_AUTH_KEYS, GET /api/tenants/:tenant_id/usage requires an admin key

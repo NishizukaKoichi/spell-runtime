@@ -240,6 +240,151 @@ describe("execution api integration", () => {
     }
   });
 
+  test("replays POST with same Idempotency-Key and returns existing execution", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json")
+    });
+
+    try {
+      const body = JSON.stringify({
+        button_id: "call_webhook_demo",
+        actor_role: "admin",
+        dry_run: true,
+        input: {
+          event: "deploy",
+          payload: {
+            service: "web"
+          }
+        },
+        confirmation: {
+          risk_acknowledged: false,
+          billing_acknowledged: false
+        }
+      });
+
+      const first = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "Idempotency-Key": " replay-key-1 " },
+        body
+      });
+      expect(first.status).toBe(202);
+      const firstPayload = (await first.json()) as Record<string, unknown>;
+      const executionId = String(firstPayload.execution_id);
+      expect(firstPayload.idempotent_replay).toBeUndefined();
+
+      const replay = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": "replay-key-1" },
+        body
+      });
+      expect(replay.status).toBe(202);
+      const replayPayload = (await replay.json()) as Record<string, unknown>;
+      expect(replayPayload.execution_id).toBe(executionId);
+      expect(replayPayload.idempotent_replay).toBe(true);
+      expect(typeof replayPayload.status).toBe("string");
+
+      const listed = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`);
+      expect(listed.status).toBe(200);
+      const listedPayload = (await listed.json()) as {
+        executions: Array<{ execution_id: string }>;
+      };
+      expect(listedPayload.executions.filter((execution) => execution.execution_id === executionId)).toHaveLength(1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("returns IDEMPOTENCY_CONFLICT when same Idempotency-Key is reused with different request", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json")
+    });
+
+    try {
+      const first = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "Idempotency-Key": "conflict-key" },
+        body: JSON.stringify({
+          button_id: "call_webhook_demo",
+          actor_role: "admin",
+          dry_run: true
+        })
+      });
+      expect(first.status).toBe(202);
+
+      const conflicting = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "Idempotency-Key": "conflict-key" },
+        body: JSON.stringify({
+          button_id: "call_webhook_demo",
+          actor_role: "admin",
+          dry_run: false
+        })
+      });
+      expect(conflicting.status).toBe(409);
+      const conflictPayload = (await conflicting.json()) as Record<string, unknown>;
+      expect(conflictPayload.error_code).toBe("IDEMPOTENCY_CONFLICT");
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("persists idempotency mapping and replays across server restart", async () => {
+    const registryPath = path.join(process.cwd(), "examples/button-registry.v1.json");
+    const requestBody = JSON.stringify({
+      button_id: "call_webhook_demo",
+      actor_role: "admin",
+      dry_run: true,
+      input: {
+        event: "deploy"
+      }
+    });
+
+    const server1 = await startExecutionApiServer({
+      port: 0,
+      registryPath
+    });
+
+    let executionId = "";
+    try {
+      const created = await fetch(`http://127.0.0.1:${server1.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "Idempotency-Key": "restart-key-1" },
+        body: requestBody
+      });
+      expect(created.status).toBe(202);
+      const createdPayload = (await created.json()) as Record<string, unknown>;
+      executionId = String(createdPayload.execution_id);
+      await waitForExecution(server1.port, executionId);
+    } finally {
+      await server1.close();
+    }
+
+    const indexPath = path.join(tempHome, ".spell", "logs", "index.json");
+    const indexRaw = await readFile(indexPath, "utf8");
+    expect(indexRaw).toContain("restart-key-1");
+
+    const server2 = await startExecutionApiServer({
+      port: 0,
+      registryPath
+    });
+
+    try {
+      const replay = await fetch(`http://127.0.0.1:${server2.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": "restart-key-1" },
+        body: requestBody
+      });
+      expect(replay.status).toBe(202);
+      const replayPayload = (await replay.json()) as Record<string, unknown>;
+      expect(replayPayload.execution_id).toBe(executionId);
+      expect(replayPayload.idempotent_replay).toBe(true);
+    } finally {
+      await server2.close();
+    }
+  });
+
   test("enforces API auth when auth tokens are configured", async () => {
     const server = await startExecutionApiServer({
       port: 0,

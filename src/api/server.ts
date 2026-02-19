@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { appendFile, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { loadButtonRegistryFromFile, resolveButtonEntry, type ButtonRegistryV1 } from "../contract/buttonRegistry";
 import { ensureSpellDirs, logsRoot } from "../util/paths";
@@ -53,6 +53,8 @@ interface ExecutionJob {
   runtime_execution_id?: string;
   runtime_log_path?: string;
   receipt?: Record<string, unknown>;
+  idempotency_key?: string;
+  idempotency_fingerprint?: string;
 }
 
 interface CreateExecutionRequest {
@@ -98,6 +100,8 @@ const DEFAULT_LOG_RETENTION_DAYS = 14;
 const DEFAULT_LOG_MAX_FILES = 500;
 const DEFAULT_TENANT_ID = "default";
 const AUTH_KEY_SEGMENT_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
+const IDEMPOTENCY_KEY_PRINTABLE_ASCII = /^[\x20-\x7E]+$/;
+const IDEMPOTENCY_KEY_MAX_LENGTH = 128;
 
 export async function startExecutionApiServer(
   options: ExecutionApiServerOptions = {}
@@ -198,37 +202,70 @@ export async function startExecutionApiServer(
 
       if (method === "POST" && route === "/spell-executions") {
         const tenantId = authContext.ok ? authContext.tenantId : DEFAULT_TENANT_ID;
-        if (countInFlightJobs(jobs) >= maxConcurrentExecutions) {
-          return sendJson(res, 429, {
+        const parsedIdempotencyKey = parseIdempotencyKey(req.headers["idempotency-key"]);
+        if (!parsedIdempotencyKey.ok) {
+          return sendJson(res, 400, {
             ok: false,
-            error_code: "CONCURRENCY_LIMITED",
-            message: `too many in-flight executions: max ${maxConcurrentExecutions}`
+            error_code: "BAD_REQUEST",
+            message: parsedIdempotencyKey.message
           });
         }
+        const idempotencyKey = parsedIdempotencyKey.key;
 
-        if (countInFlightJobsForTenant(jobs, tenantId) >= tenantMaxConcurrentExecutions) {
-          return sendJson(res, 429, {
-            ok: false,
-            error_code: "TENANT_CONCURRENCY_LIMITED",
-            message: `too many in-flight executions for tenant ${tenantId}: max ${tenantMaxConcurrentExecutions}`
-          });
-        }
+        const checkSubmissionLimits = (): { statusCode: number; payload: Record<string, unknown> } | null => {
+          if (countInFlightJobs(jobs) >= maxConcurrentExecutions) {
+            return {
+              statusCode: 429,
+              payload: {
+                ok: false,
+                error_code: "CONCURRENCY_LIMITED",
+                message: `too many in-flight executions: max ${maxConcurrentExecutions}`
+              }
+            };
+          }
 
-        const ip = req.socket.remoteAddress ?? "unknown";
-        if (!allowRate(ip, postHistoryByIp, rateWindowMs, rateMaxRequests)) {
-          return sendJson(res, 429, {
-            ok: false,
-            error_code: "RATE_LIMITED",
-            message: "too many requests"
-          });
-        }
+          if (countInFlightJobsForTenant(jobs, tenantId) >= tenantMaxConcurrentExecutions) {
+            return {
+              statusCode: 429,
+              payload: {
+                ok: false,
+                error_code: "TENANT_CONCURRENCY_LIMITED",
+                message: `too many in-flight executions for tenant ${tenantId}: max ${tenantMaxConcurrentExecutions}`
+              }
+            };
+          }
 
-        if (!allowRate(tenantId, postHistoryByTenant, tenantRateWindowMs, tenantRateMaxRequests)) {
-          return sendJson(res, 429, {
-            ok: false,
-            error_code: "TENANT_RATE_LIMITED",
-            message: `too many requests for tenant ${tenantId}`
-          });
+          const ip = req.socket.remoteAddress ?? "unknown";
+          if (!allowRate(ip, postHistoryByIp, rateWindowMs, rateMaxRequests)) {
+            return {
+              statusCode: 429,
+              payload: {
+                ok: false,
+                error_code: "RATE_LIMITED",
+                message: "too many requests"
+              }
+            };
+          }
+
+          if (!allowRate(tenantId, postHistoryByTenant, tenantRateWindowMs, tenantRateMaxRequests)) {
+            return {
+              statusCode: 429,
+              payload: {
+                ok: false,
+                error_code: "TENANT_RATE_LIMITED",
+                message: `too many requests for tenant ${tenantId}`
+              }
+            };
+          }
+
+          return null;
+        };
+
+        if (!idempotencyKey) {
+          const limitError = checkSubmissionLimits();
+          if (limitError) {
+            return sendJson(res, limitError.statusCode, limitError.payload);
+          }
         }
 
         let parsed: CreateExecutionRequest;
@@ -309,6 +346,43 @@ export async function startExecutionApiServer(
           });
         }
 
+        const dryRun = parsed.dry_run ?? false;
+        const confirmationFlags = normalizeConfirmationFlags(parsed.confirmation);
+        let idempotencyFingerprint: string | undefined;
+        if (idempotencyKey) {
+          idempotencyFingerprint = computeExecutionRequestFingerprint({
+            tenant_id: tenantId,
+            button_id: entry.button_id,
+            input,
+            dry_run: dryRun,
+            confirmation: confirmationFlags,
+            actor_role: actorRole
+          });
+          const existing = findExistingJobByIdempotencyKey(jobs, tenantId, idempotencyKey);
+          if (existing) {
+            if (existing.idempotency_fingerprint === idempotencyFingerprint) {
+              return sendJson(res, 202, {
+                ok: true,
+                execution_id: existing.execution_id,
+                tenant_id: existing.tenant_id,
+                status: existing.status,
+                idempotent_replay: true
+              });
+            }
+
+            return sendJson(res, 409, {
+              ok: false,
+              error_code: "IDEMPOTENCY_CONFLICT",
+              message: "idempotency key already used with a different request"
+            });
+          }
+
+          const limitError = checkSubmissionLimits();
+          if (limitError) {
+            return sendJson(res, limitError.statusCode, limitError.payload);
+          }
+        }
+
         const executionId = `exec_${Date.now()}_${randomUUID().slice(0, 8)}`;
         const now = new Date().toISOString();
         const requireSignature = forceRequireSignature || entry.require_signature === true;
@@ -322,7 +396,9 @@ export async function startExecutionApiServer(
           status: "queued",
           tenant_id: tenantId,
           actor_role: actorRole,
-          created_at: now
+          created_at: now,
+          idempotency_key: idempotencyKey ?? undefined,
+          idempotency_fingerprint: idempotencyFingerprint
         };
 
         jobs.set(executionId, job);
@@ -332,7 +408,7 @@ export async function startExecutionApiServer(
         runningJob = runJob(
           job,
           input,
-          parsed.dry_run ?? false,
+          dryRun,
           entry.required_confirmations,
           job.require_signature,
           executionTimeoutMs,
@@ -727,6 +803,72 @@ function findLineValue(stdout: string, prefix: string): string | undefined {
   return undefined;
 }
 
+function parseIdempotencyKey(
+  headerValue: string | string[] | undefined
+): { ok: true; key: string | null } | { ok: false; message: string } {
+  if (headerValue === undefined) {
+    return { ok: true, key: null };
+  }
+
+  const raw = Array.isArray(headerValue) ? headerValue.join(",") : headerValue;
+  const key = raw.trim();
+  if (
+    key.length < 1 ||
+    key.length > IDEMPOTENCY_KEY_MAX_LENGTH ||
+    !IDEMPOTENCY_KEY_PRINTABLE_ASCII.test(key)
+  ) {
+    return {
+      ok: false,
+      message: "invalid Idempotency-Key header: expected printable ASCII, trimmed length 1..128"
+    };
+  }
+
+  return { ok: true, key };
+}
+
+function normalizeConfirmationFlags(confirmation: CreateExecutionRequest["confirmation"] | undefined): {
+  risk_acknowledged: boolean;
+  billing_acknowledged: boolean;
+} {
+  return {
+    risk_acknowledged: confirmation?.risk_acknowledged === true,
+    billing_acknowledged: confirmation?.billing_acknowledged === true
+  };
+}
+
+function computeExecutionRequestFingerprint(payload: {
+  tenant_id: string;
+  button_id: string;
+  input: Record<string, unknown>;
+  dry_run: boolean;
+  confirmation: {
+    risk_acknowledged: boolean;
+    billing_acknowledged: boolean;
+  };
+  actor_role: string;
+}): string {
+  const canonical = canonicalizeForFingerprint(payload);
+  const serialized = JSON.stringify(canonical);
+  return createHash("sha256").update(serialized).digest("hex");
+}
+
+function canonicalizeForFingerprint(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalizeForFingerprint(item));
+  }
+  if (isPlainObject(value)) {
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value).sort()) {
+      const next = canonicalizeForFingerprint(value[key]);
+      if (next !== undefined) {
+        out[key] = next;
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
 function parseCreateExecutionRequest(payload: unknown): CreateExecutionRequest {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new Error("request body must be an object");
@@ -758,6 +900,18 @@ function parseCreateExecutionRequest(payload: unknown): CreateExecutionRequest {
   const confirmation = obj.confirmation;
   if (confirmation !== undefined && (!confirmation || typeof confirmation !== "object" || Array.isArray(confirmation))) {
     throw new Error("confirmation must be an object");
+  }
+  if (confirmation && "risk_acknowledged" in confirmation) {
+    const value = (confirmation as Record<string, unknown>).risk_acknowledged;
+    if (value !== undefined && typeof value !== "boolean") {
+      throw new Error("confirmation.risk_acknowledged must be boolean");
+    }
+  }
+  if (confirmation && "billing_acknowledged" in confirmation) {
+    const value = (confirmation as Record<string, unknown>).billing_acknowledged;
+    if (value !== undefined && typeof value !== "boolean") {
+      throw new Error("confirmation.billing_acknowledged must be boolean");
+    }
   }
 
   const actorRole = obj.actor_role;
@@ -858,6 +1012,23 @@ function countInFlightJobs(jobs: Map<string, ExecutionJob>): number {
     }
   }
   return total;
+}
+
+function findExistingJobByIdempotencyKey(
+  jobs: Map<string, ExecutionJob>,
+  tenantId: string,
+  idempotencyKey: string
+): ExecutionJob | null {
+  let existing: ExecutionJob | null = null;
+  for (const job of jobs.values()) {
+    if (job.tenant_id !== tenantId || job.idempotency_key !== idempotencyKey) {
+      continue;
+    }
+    if (!existing || job.created_at > existing.created_at) {
+      existing = job;
+    }
+  }
+  return existing;
 }
 
 function parseListExecutionsQuery(params: URLSearchParams): ListExecutionsQuery {
@@ -1286,6 +1457,8 @@ function isExecutionJob(value: unknown): value is ExecutionJob {
     typeof obj.actor_role === "string" &&
     typeof obj.created_at === "string" &&
     typeof obj.status === "string" &&
+    (obj.idempotency_key === undefined || typeof obj.idempotency_key === "string") &&
+    (obj.idempotency_fingerprint === undefined || typeof obj.idempotency_fingerprint === "string") &&
     isJobStatus(obj.status)
   );
 }

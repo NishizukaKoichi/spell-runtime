@@ -60,12 +60,18 @@ See sample:
 ## 6. Execution API Contract
 ## 6.0 Discovery and UI endpoints
 - `GET /api/buttons`
-- `GET /api/spell-executions` (query: `status`, `button_id`, `limit`)
+- `GET /api/spell-executions` (query: `status`, `button_id`, `tenant_id`, `limit`)
 - `GET /api/spell-executions/:execution_id`
 - `GET /` (minimal receipts UI)
 - `GET /ui/app.js` (UI client script)
 
 ## 6.1 POST /api/spell-executions
+Headers:
+- Optional `Idempotency-Key` (case-insensitive)
+  - server trims value
+  - must be printable ASCII
+  - trimmed length must be `1..128`
+
 Request body:
 ```json
 {
@@ -91,6 +97,25 @@ Response (accepted, async):
 }
 ```
 
+Response (accepted, idempotent replay):
+```json
+{
+  "ok": true,
+  "execution_id": "exec_1739320000000_ab12cd34",
+  "status": "running",
+  "idempotent_replay": true
+}
+```
+
+Response (idempotency conflict):
+```json
+{
+  "ok": false,
+  "error_code": "IDEMPOTENCY_CONFLICT",
+  "message": "idempotency key already used with a different request"
+}
+```
+
 Response (failure):
 ```json
 {
@@ -104,6 +129,7 @@ Response (failure):
 Returns execution summary and sanitized receipt (no raw stdout/stderr).
 
 Execution list state is persisted at `~/.spell/logs/index.json` so lists survive API restarts.
+Idempotency key mappings for executions are persisted in that same index file and survive API restarts.
 When API auth is enabled, all `/api/*` endpoints require `Authorization: Bearer <token>` (or `x-api-key`).
 Recommended auth configuration uses `SPELL_API_AUTH_KEYS` (role-bound keys) so UI cannot self-assert `actor_role`.
 
