@@ -489,6 +489,52 @@ describe("spell cli integration", () => {
     expect(listAfterRemove.stdout).toContain("No licenses");
   });
 
+  test("trust commands list active/revoked keys and support key revoke/restore", async () => {
+    const { publicKey } = generateKeyPairSync("ed25519");
+    const publicKeyDer = publicKey.export({ format: "der", type: "spki" }) as Buffer;
+
+    expect(await runCli(["node", "spell", "trust", "add", "trust-lifecycle", publicKeyDer.toString("base64url"), "--key-id", "k1"])).toBe(0);
+
+    const listInitial = await runCliCapture(["node", "spell", "trust", "list"]);
+    expect(listInitial.code).toBe(0);
+    expect(listInitial.stdout).toContain("publisher\tkey_id\tstatus");
+    expect(listInitial.stdout).toContain("trust-lifecycle\tk1\tactive");
+
+    const revoke = await runCliCapture([
+      "node",
+      "spell",
+      "trust",
+      "revoke-key",
+      "trust-lifecycle",
+      "--key-id",
+      "k1",
+      "--reason",
+      "incident"
+    ]);
+    expect(revoke.code).toBe(0);
+    expect(revoke.stdout).toContain("revoked publisher=trust-lifecycle key_id=k1");
+
+    const listRevoked = await runCliCapture(["node", "spell", "trust", "list"]);
+    expect(listRevoked.code).toBe(0);
+    expect(listRevoked.stdout).toContain("trust-lifecycle\tk1\trevoked");
+
+    const restore = await runCliCapture([
+      "node",
+      "spell",
+      "trust",
+      "restore-key",
+      "trust-lifecycle",
+      "--key-id",
+      "k1"
+    ]);
+    expect(restore.code).toBe(0);
+    expect(restore.stdout).toContain("restored publisher=trust-lifecycle key_id=k1");
+
+    const listRestored = await runCliCapture(["node", "spell", "trust", "list"]);
+    expect(listRestored.code).toBe(0);
+    expect(listRestored.stdout).toContain("trust-lifecycle\tk1\tactive");
+  });
+
   test("billing guard blocks without --allow-billing", async () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/billing-guard");
     expect(await runCli(["node", "spell", "install", fixture])).toBe(0);

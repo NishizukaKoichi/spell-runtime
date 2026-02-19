@@ -7,6 +7,9 @@ export interface PublisherTrustKeyV1 {
   key_id: string;
   algorithm: "ed25519";
   public_key: string; // base64url spki der
+  revoked?: boolean;
+  revoked_at?: string;
+  revoke_reason?: string;
 }
 
 export interface PublisherTrustV1 {
@@ -79,7 +82,22 @@ export async function loadPublisherTrust(publisher: string): Promise<PublisherTr
     if (!/^[A-Za-z0-9_-]+$/.test(publicKey)) {
       throw new SpellError("trust key public_key must be base64url");
     }
-    return { key_id: keyId, algorithm: "ed25519", public_key: publicKey };
+    const revoked = readOptionalBoolean(e, "revoked");
+    if (e.revoked !== undefined && revoked === undefined) {
+      throw new SpellError("trust key revoked must be a boolean");
+    }
+
+    const revokedAt = revoked === true ? readOptionalIsoTimestamp(e, "revoked_at", keyId) : undefined;
+    const revokeReason = revoked === true ? readOptionalString(e, "revoke_reason") : undefined;
+
+    return {
+      key_id: keyId,
+      algorithm: "ed25519",
+      public_key: publicKey,
+      revoked: revoked === true,
+      revoked_at: revokedAt,
+      revoke_reason: revokeReason
+    };
   });
 
   assertUniqueKeyIds(keys);
@@ -101,17 +119,39 @@ export async function upsertTrustedPublisherKey(
   const next: PublisherTrustV1 = existing ?? { version: "v1", publisher, keys: [] };
 
   const filtered = next.keys.filter((entry) => entry.key_id !== key.key_id);
-  filtered.push(key);
-  filtered.sort((a, b) => a.key_id.localeCompare(b.key_id));
+  filtered.push(normalizeTrustKey(key));
 
-  const payload: PublisherTrustV1 = {
+  await writePublisherTrust({
     version: "v1",
     publisher,
     keys: filtered
-  };
+  });
+}
 
-  const filePath = publisherTrustFilePath(publisher);
-  await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+export async function revokeTrustedPublisherKey(
+  publisher: string,
+  keyId: string,
+  reason?: string
+): Promise<PublisherTrustKeyV1> {
+  const now = new Date().toISOString();
+  return updateTrustedPublisherKey(publisher, keyId, (current) => ({
+    ...current,
+    revoked: true,
+    revoked_at: now,
+    revoke_reason: normalizeOptionalReason(reason)
+  }));
+}
+
+export async function restoreTrustedPublisherKey(
+  publisher: string,
+  keyId: string
+): Promise<PublisherTrustKeyV1> {
+  return updateTrustedPublisherKey(publisher, keyId, (current) => ({
+    ...current,
+    revoked: false,
+    revoked_at: undefined,
+    revoke_reason: undefined
+  }));
 }
 
 export async function removeTrustedPublisher(publisher: string): Promise<boolean> {
@@ -160,10 +200,30 @@ export async function listTrustedPublishers(): Promise<Array<{ publisher: string
       const kk = k as Record<string, unknown>;
       if (typeof kk.key_id !== "string" || typeof kk.public_key !== "string") continue;
       if (kk.algorithm !== "ed25519") continue;
-      keys.push({ key_id: kk.key_id, algorithm: "ed25519", public_key: kk.public_key });
+
+      const revoked = kk.revoked;
+      if (revoked !== undefined && typeof revoked !== "boolean") continue;
+
+      let revokedAt: string | undefined;
+      try {
+        revokedAt = revoked === true ? readOptionalIsoTimestamp(kk, "revoked_at", kk.key_id) : undefined;
+      } catch {
+        continue;
+      }
+      const revokeReason = revoked === true ? readOptionalString(kk, "revoke_reason") : undefined;
+
+      keys.push({
+        key_id: kk.key_id,
+        algorithm: "ed25519",
+        public_key: kk.public_key,
+        revoked: revoked === true,
+        revoked_at: revokedAt,
+        revoke_reason: revokeReason
+      });
     }
 
     if (keys.length === 0) continue;
+    keys.sort((a, b) => a.key_id.localeCompare(b.key_id));
     out.push({ publisher, keys });
   }
 
@@ -179,6 +239,35 @@ function readRequiredString(obj: Record<string, unknown>, key: string): string {
   return value.trim();
 }
 
+function readOptionalString(obj: Record<string, unknown>, key: string): string | undefined {
+  const value = obj[key];
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+  return value.trim();
+}
+
+function readOptionalBoolean(obj: Record<string, unknown>, key: string): boolean | undefined {
+  const value = obj[key];
+  if (typeof value !== "boolean") {
+    return undefined;
+  }
+  return value;
+}
+
+function readOptionalIsoTimestamp(
+  obj: Record<string, unknown>,
+  key: string,
+  keyId: string
+): string | undefined {
+  const value = readOptionalString(obj, key);
+  if (!value) return undefined;
+  if (Number.isNaN(Date.parse(value))) {
+    throw new SpellError(`trust key ${key} must be an ISO timestamp: ${keyId}`);
+  }
+  return value;
+}
+
 function assertUniqueKeyIds(keys: PublisherTrustKeyV1[]): void {
   const seen = new Set<string>();
   for (const key of keys) {
@@ -189,3 +278,70 @@ function assertUniqueKeyIds(keys: PublisherTrustKeyV1[]): void {
   }
 }
 
+function normalizeTrustKey(key: PublisherTrustKeyV1): PublisherTrustKeyV1 {
+  const revoked = key.revoked === true;
+  const revokedAt = revoked ? normalizeOptionalIsoTimestamp(key.revoked_at) : undefined;
+  const revokeReason = revoked ? normalizeOptionalReason(key.revoke_reason) : undefined;
+
+  return {
+    key_id: key.key_id,
+    algorithm: "ed25519",
+    public_key: key.public_key,
+    revoked,
+    revoked_at: revokedAt,
+    revoke_reason: revokeReason
+  };
+}
+
+async function writePublisherTrust(record: PublisherTrustV1): Promise<void> {
+  await mkdir(trustedPublishersRoot(), { recursive: true });
+  const filePath = publisherTrustFilePath(record.publisher);
+  const keys = [...record.keys].map(normalizeTrustKey).sort((a, b) => a.key_id.localeCompare(b.key_id));
+  await writeFile(filePath, `${JSON.stringify({ version: "v1", publisher: record.publisher, keys }, null, 2)}\n`, "utf8");
+}
+
+async function updateTrustedPublisherKey(
+  publisher: string,
+  keyId: string,
+  transform: (current: PublisherTrustKeyV1) => PublisherTrustKeyV1
+): Promise<PublisherTrustKeyV1> {
+  const trust = await loadPublisherTrust(publisher);
+  if (!trust) {
+    throw new SpellError(`trusted publisher not found: ${publisher}`);
+  }
+
+  const index = trust.keys.findIndex((entry) => entry.key_id === keyId);
+  if (index < 0) {
+    throw new SpellError(`trusted key not found: publisher=${publisher} key_id=${keyId}`);
+  }
+
+  const updated = normalizeTrustKey(transform(trust.keys[index]));
+  const keys = [...trust.keys];
+  keys[index] = updated;
+  await writePublisherTrust({
+    version: "v1",
+    publisher,
+    keys
+  });
+
+  return updated;
+}
+
+function normalizeOptionalReason(value?: string): string | undefined {
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+  return value.trim();
+}
+
+function normalizeOptionalIsoTimestamp(value?: string): string | undefined {
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  if (Number.isNaN(Date.parse(normalized))) {
+    throw new SpellError("trust key revoked_at must be an ISO timestamp");
+  }
+  return normalized;
+}

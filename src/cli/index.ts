@@ -10,7 +10,13 @@ import { generateSigningKeypair, signBundleFromPrivateKey } from "../signature/s
 import { castSpell } from "../runner/cast";
 import { inspectLicense, listLicenses, removeLicense, restoreLicense, revokeLicense, upsertLicense } from "../license/store";
 import { loadRuntimePolicy, parseRuntimePolicyFile, runtimePolicyFilePath } from "../policy";
-import { listTrustedPublishers, removeTrustedPublisher, upsertTrustedPublisherKey } from "../signature/trustStore";
+import {
+  listTrustedPublishers,
+  removeTrustedPublisher,
+  restoreTrustedPublisherKey,
+  revokeTrustedPublisherKey,
+  upsertTrustedPublisherKey
+} from "../signature/trustStore";
 import { SpellError } from "../util/errors";
 import { logsRoot } from "../util/paths";
 
@@ -385,11 +391,34 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
         return;
       }
 
-      process.stdout.write("publisher\tkey_ids\n");
+      process.stdout.write("publisher\tkey_id\tstatus\n");
       for (const entry of publishers) {
-        const ids = entry.keys.map((k) => k.key_id).sort().join(",");
-        process.stdout.write(`${entry.publisher}\t${ids}\n`);
+        for (const key of entry.keys) {
+          const status = key.revoked === true ? "revoked" : "active";
+          process.stdout.write(`${entry.publisher}\t${key.key_id}\t${status}\n`);
+        }
       }
+    });
+
+  trust
+    .command("revoke-key")
+    .description("Revoke a trusted publisher key without deleting publisher trust")
+    .argument("<publisher>", "Publisher (id prefix before first slash)")
+    .requiredOption("--key-id <id>", "Key id")
+    .option("--reason <text>", "Revocation reason")
+    .action(async (publisher: string, options: { keyId: string; reason?: string }) => {
+      const revoked = await revokeTrustedPublisherKey(publisher, options.keyId, options.reason);
+      process.stdout.write(`revoked publisher=${publisher} key_id=${revoked.key_id}\n`);
+    });
+
+  trust
+    .command("restore-key")
+    .description("Restore a revoked trusted publisher key")
+    .argument("<publisher>", "Publisher (id prefix before first slash)")
+    .requiredOption("--key-id <id>", "Key id")
+    .action(async (publisher: string, options: { keyId: string }) => {
+      const restored = await restoreTrustedPublisherKey(publisher, options.keyId);
+      process.stdout.write(`restored publisher=${publisher} key_id=${restored.key_id}\n`);
     });
 
   trust

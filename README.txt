@@ -50,6 +50,8 @@ Manual npx (local package):
 - spell sign bundle <local-path> --private-key <file> [--key-id default] [--publisher <name>]
 - spell trust add <publisher> <public-key> [--key-id default]
 - spell trust list
+- spell trust revoke-key <publisher> --key-id <id> [--reason <text>]
+- spell trust restore-key <publisher> --key-id <id>
 - spell trust remove <publisher>
 - spell log <execution-id>
 
@@ -249,11 +251,15 @@ Signing flow:
 Trust store:
 - spell trust add <publisher> <public-key>
 - spell trust list
+- spell trust revoke-key <publisher> --key-id <id> [--reason <text>]
+- spell trust restore-key <publisher> --key-id <id>
 - spell trust remove <publisher>
 
 Notes:
 - publisher is derived from the spell id prefix before the first / (example: samples/call-webhook -> samples).
 - public key format is ed25519 spki DER encoded as base64url.
+- spell trust list prints one row per key with status (active or revoked).
+- revoked keys remain in the trust record and are ignored by signature verification until restored.
 
 8.2 Entitlement tokens (billing)
 spell license add <name> <token> now validates and stores signed entitlement tokens.

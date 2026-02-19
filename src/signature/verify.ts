@@ -67,6 +67,18 @@ export async function verifyBundleSignature(
     };
   }
 
+  if (key.revoked === true) {
+    const reason = key.revoke_reason ? ` (${key.revoke_reason})` : "";
+    return {
+      ok: false,
+      status: "invalid",
+      publisher,
+      key_id: sig.key_id,
+      digest: sig.digest.value,
+      message: `trusted key_id is revoked: ${sig.key_id}${reason}`
+    };
+  }
+
   const digest = await computeBundleDigest(bundlePath);
   if (digest.valueHex !== sig.digest.value) {
     return {
@@ -139,4 +151,3 @@ function decodeBase64Url(value: string, label: string): Buffer {
     throw new SpellError(`invalid base64url for ${label}: ${(error as Error).message}`);
   }
 }
-
