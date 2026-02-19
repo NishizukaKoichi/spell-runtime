@@ -95,6 +95,7 @@ describe("spell cli integration", () => {
 
   test("registry set/show and install resolves a registry source", async () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    const expectedDigest = `sha256:${(await computeBundleDigest(fixture)).valueHex.toUpperCase()}`;
     const gitRepo = await createBareGitRepoFromSource(fixture);
     const gitUrl = "https://spell.test/hello-host.git";
     const gitSource = `${gitUrl}#main`;
@@ -115,7 +116,8 @@ describe("spell cli integration", () => {
             id: "fixtures/hello-host",
             version: "1.0.0",
             source: gitSource,
-            commit: gitRepo.commit.toUpperCase()
+            commit: gitRepo.commit.toUpperCase(),
+            digest: expectedDigest
           }
         ]
       });
@@ -181,6 +183,40 @@ describe("spell cli integration", () => {
       );
       expect(result.code).toBe(1);
       expect(result.stderr).toContain(`registry commit mismatch: expected ${expectedCommit}, got ${gitRepo.commit}`);
+    } finally {
+      await rm(gitRepo.tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("registry install fails when digest pin does not match canonical bundle digest", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    const actualDigest = `sha256:${(await computeBundleDigest(fixture)).valueHex}`;
+    const gitRepo = await createBareGitRepoFromSource(fixture);
+    const gitUrl = "https://spell.test/hello-host.git";
+    const gitSource = `${gitUrl}#main`;
+    const indexUrl = "https://registry.test/spell-index.v1.json";
+    const expectedDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+    try {
+      expect(await runCli(["node", "spell", "registry", "set", indexUrl])).toBe(0);
+
+      nock("https://registry.test").get("/spell-index.v1.json").reply(200, {
+        version: "v1",
+        spells: [
+          {
+            id: "fixtures/hello-host",
+            version: "1.0.0",
+            source: gitSource,
+            digest: expectedDigest
+          }
+        ]
+      });
+
+      const result = await withGitUrlRewrite(gitUrl, gitRepo.remotePath, async () =>
+        runCliCapture(["node", "spell", "install", "registry:fixtures/hello-host@1.0.0"])
+      );
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain(`registry digest mismatch: expected ${expectedDigest}, got ${actualDigest}`);
     } finally {
       await rm(gitRepo.tempDir, { recursive: true, force: true });
     }

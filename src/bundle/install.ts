@@ -19,6 +19,7 @@ import { ensureSpellDirs, spellsRoot } from "../util/paths";
 import { SpellError } from "../util/errors";
 import { loadManifestFromDir } from "./manifest";
 import { resolveRegistryInstallSource } from "./registry";
+import { computeBundleDigest } from "../signature/bundleDigest";
 
 export interface InstallResult {
   id: string;
@@ -34,6 +35,9 @@ export async function installBundle(sourceInput: string): Promise<InstallResult>
     expectedRegistryCommit: registrySource?.expectedCommit
   });
   try {
+    if (registrySource?.expectedDigest) {
+      await verifyRegistryDigestPin(source.sourceRoot, registrySource.expectedDigest);
+    }
     return await installBundleFromSource(source.sourceRoot, source.provenance);
   } finally {
     await source.cleanup();
@@ -207,6 +211,24 @@ function parsePinnedGitSource(source: string): { gitUrl: string; ref: string } {
 }
 
 function matchesCommitIgnoreCase(actual: string, expected: string): boolean {
+  return actual.toLowerCase() === expected.toLowerCase();
+}
+
+async function verifyRegistryDigestPin(sourceRoot: string, expectedRegistryDigest: string): Promise<void> {
+  const digest = await computeBundleDigest(sourceRoot);
+  const actualRegistryDigest = formatRegistryDigest(digest.valueHex);
+  if (!matchesDigestIgnoreCase(actualRegistryDigest, expectedRegistryDigest)) {
+    throw new SpellError(
+      `registry digest mismatch: expected ${expectedRegistryDigest}, got ${actualRegistryDigest}`
+    );
+  }
+}
+
+function formatRegistryDigest(valueHex: string): string {
+  return `sha256:${valueHex}`;
+}
+
+function matchesDigestIgnoreCase(actual: string, expected: string): boolean {
   return actual.toLowerCase() === expected.toLowerCase();
 }
 

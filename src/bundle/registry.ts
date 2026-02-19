@@ -19,6 +19,7 @@ export interface RegistrySpellEntry {
   version: string;
   source: string;
   commit?: string;
+  digest?: string;
 }
 
 export interface RegistryIndexV1 {
@@ -34,6 +35,7 @@ export interface RegistryInstallRef {
 export interface RegistryInstallSource {
   source: string;
   expectedCommit?: string;
+  expectedDigest?: string;
 }
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });
@@ -78,7 +80,8 @@ const registryIndexSchema = {
           id: { type: "string", minLength: 1 },
           version: { type: "string", minLength: 1 },
           source: { type: "string", minLength: 1 },
-          commit: { type: "string", pattern: "^[0-9a-fA-F]{40}$" }
+          commit: { type: "string", pattern: "^[0-9a-fA-F]{40}$" },
+          digest: { type: "string", pattern: "^sha256:[0-9a-fA-F]{64}$" }
         }
       }
     }
@@ -205,7 +208,8 @@ export async function resolveRegistryInstallSource(sourceInput: string): Promise
 
   return {
     source,
-    expectedCommit: entry.commit
+    expectedCommit: entry.commit,
+    expectedDigest: entry.digest
   };
 }
 

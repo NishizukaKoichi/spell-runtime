@@ -20,7 +20,8 @@ describe("install registry index", () => {
             id: "fixtures/hello-host",
             version: "2.0.0",
             source: "https://spell.test/hello-host.git#v2",
-            commit: "AABBCCDDEEFF00112233445566778899AABBCCDD"
+            commit: "AABBCCDDEEFF00112233445566778899AABBCCDD",
+            digest: "sha256:AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899"
           }
         ]
       }),
@@ -30,6 +31,7 @@ describe("install registry index", () => {
     const resolved = resolveRegistryEntry(index, "fixtures/hello-host", "2.0.0");
     expect(resolved.source).toBe("https://spell.test/hello-host.git#v2");
     expect(resolved.commit).toBe("AABBCCDDEEFF00112233445566778899AABBCCDD");
+    expect(resolved.digest).toBe("sha256:AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899");
   });
 
   test("requires exact id/version match", () => {
@@ -63,6 +65,25 @@ describe("install registry index", () => {
               version: "1.0.0",
               source: "https://spell.test/hello-host.git#main",
               commit: "ZZZZCCDDEEFF00112233445566778899AABBCCDD"
+            }
+          ]
+        }),
+        "inline"
+      )
+    ).toThrow(/registry index validation failed/);
+  });
+
+  test("rejects invalid digest pin in registry index", () => {
+    expect(() =>
+      parseRegistryIndexJson(
+        JSON.stringify({
+          version: "v1",
+          spells: [
+            {
+              id: "fixtures/hello-host",
+              version: "1.0.0",
+              source: "https://spell.test/hello-host.git#main",
+              digest: "sha256:ZZZZCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899"
             }
           ]
         }),
