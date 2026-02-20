@@ -328,7 +328,7 @@ Use these `effect.type` words where possible:
 Docker-backed integration tests are opt-in locally and enabled in CI `docker-smoke`:
 
 ```bash
-SPELL_DOCKER_TESTS=1 pnpm exec vitest run tests/integration/cli.integration.test.ts -t "runner-in-image|real docker image source"
+SPELL_DOCKER_TESTS=1 pnpm exec vitest run tests/integration/cli.integration.test.ts -t "real docker image source"
 ```
 
 Note: these tests require a reachable Docker daemon (`docker info` must succeed).

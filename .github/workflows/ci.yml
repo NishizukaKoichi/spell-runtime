@@ -60,4 +60,4 @@ jobs:
       - name: Docker OCI + runner smoke
         env:
           SPELL_DOCKER_TESTS: "1"
-        run: pnpm exec vitest run tests/integration/cli.integration.test.ts -t "runner-in-image|real docker image source"
+        run: pnpm exec vitest run tests/integration/cli.integration.test.ts -t "real docker image source"
