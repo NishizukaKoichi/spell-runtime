@@ -1172,11 +1172,10 @@ describe("execution api integration", () => {
       const logFiles = files.filter((name) => name.endsWith(".json") && name !== "index.json");
       expect(logFiles.length).toBe(1);
 
-      const listed = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`);
-      expect(listed.status).toBe(200);
-      const payload = (await listed.json()) as {
-        executions: Array<{ execution_id: string }>;
-      };
+      const payload = await waitForExecutionList(
+        server.port,
+        (executions) => executions.length === 1 && executions[0]?.execution_id === secondExecutionId
+      );
       expect(payload.executions.length).toBe(1);
       expect(payload.executions[0]?.execution_id).toBe(secondExecutionId);
     } finally {
@@ -1538,6 +1537,30 @@ async function waitForExecution(
   }
 
   throw new Error("execution did not finish in time");
+}
+
+async function waitForExecutionList(
+  port: number,
+  predicate: (executions: Array<{ execution_id: string }>) => boolean,
+  token?: string
+): Promise<{ executions: Array<{ execution_id: string }> }> {
+  const deadline = Date.now() + 8_000;
+
+  while (Date.now() < deadline) {
+    const response = await fetch(`http://127.0.0.1:${port}/api/spell-executions`, {
+      headers: token ? { authorization: `Bearer ${token}` } : undefined
+    });
+    if (response.status === 200) {
+      const payload = (await response.json()) as { executions: Array<{ execution_id: string }> };
+      if (predicate(payload.executions)) {
+        return payload;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
+
+  throw new Error("execution list did not reach expected state");
 }
 
 async function waitForExecutionStatus(
