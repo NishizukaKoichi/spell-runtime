@@ -328,15 +328,15 @@ export function enforceRegistryRequiredPins(
   }
 }
 
-export async function resolveRegistryInstallSource(sourceInput: string): Promise<RegistryInstallSource> {
+export async function resolveRegistryInstallSource(
+  sourceInput: string,
+  preferredRegistryName?: string
+): Promise<RegistryInstallSource> {
   const parsed = parseRegistryInstallRef(sourceInput);
   const config = await readRegistryConfig();
-  const defaultIndex = config.indexes.find((index) => index.name === "default");
-  if (!defaultIndex) {
-    throw new SpellError(`registry config missing default index (run 'spell registry set <url>' first)`);
-  }
+  const selectedIndex = selectRegistryInstallIndex(config, preferredRegistryName);
 
-  const index = await fetchRegistryIndex(defaultIndex.url);
+  const index = await fetchRegistryIndex(selectedIndex.url);
   const entry = resolveRegistryEntry(index, parsed.id, parsed.version);
   const resolvedRef: RegistryInstallRef = {
     id: parsed.id,
@@ -386,6 +386,23 @@ function selectRegistryIndexes(config: RegistryConfigV1, rawName?: string): Regi
     throw new SpellError(`registry index not found: ${name}`);
   }
   return [found];
+}
+
+function selectRegistryInstallIndex(config: RegistryConfigV1, rawName?: string): RegistryIndexRef {
+  if (rawName !== undefined && rawName.trim() !== "") {
+    const name = normalizeRegistryIndexName(rawName, "registry index name");
+    const found = config.indexes.find((index) => index.name === name);
+    if (!found) {
+      throw new SpellError(`registry index not found: ${name}`);
+    }
+    return found;
+  }
+
+  const defaultIndex = config.indexes.find((index) => index.name === "default");
+  if (!defaultIndex) {
+    throw new SpellError(`registry config missing default index (run 'spell registry set <url>' first)`);
+  }
+  return defaultIndex;
 }
 
 async function writeRegistryConfig(config: RegistryConfigV1): Promise<void> {

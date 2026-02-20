@@ -28,8 +28,12 @@ export interface InstallResult {
   destination: string;
 }
 
-export async function installBundle(sourceInput: string): Promise<InstallResult> {
-  const registrySource = await resolveRegistrySourceIfNeeded(sourceInput);
+export interface InstallBundleOptions {
+  registryName?: string;
+}
+
+export async function installBundle(sourceInput: string, options: InstallBundleOptions = {}): Promise<InstallResult> {
+  const registrySource = await resolveRegistrySourceIfNeeded(sourceInput, options.registryName);
   const resolvedInput = registrySource?.source ?? sourceInput;
   const source = await resolveInstallSource(resolvedInput, {
     expectedRegistryCommit: registrySource?.expectedCommit
@@ -44,12 +48,18 @@ export async function installBundle(sourceInput: string): Promise<InstallResult>
   }
 }
 
-async function resolveRegistrySourceIfNeeded(sourceInput: string): Promise<RegistryInstallSource | undefined> {
+async function resolveRegistrySourceIfNeeded(
+  sourceInput: string,
+  registryName?: string
+): Promise<RegistryInstallSource | undefined> {
   if (!isRegistrySource(sourceInput)) {
+    if (registryName !== undefined) {
+      throw new SpellError("--registry is only supported for registry:<id> install sources");
+    }
     return undefined;
   }
 
-  return resolveRegistryInstallSource(sourceInput);
+  return resolveRegistryInstallSource(sourceInput, registryName);
 }
 
 type InstallProvenance = LocalInstallProvenance | GitInstallProvenance;

@@ -10,6 +10,7 @@ import {
   parseRegistryIndexJson,
   parseRegistryInstallRef,
   readRegistryConfig,
+  resolveRegistryInstallSource,
   readRegistryRequiredPinsPolicy,
   removeRegistryIndex,
   resolveRegistryEntry,
@@ -335,6 +336,31 @@ describe("registry config lifecycle", () => {
         spellCount: 1
       }
     ]);
+  });
+
+  test("resolveRegistryInstallSource can target a named index", async () => {
+    await setDefaultRegistryIndex("https://registry-primary.test/spell-index.v1.json");
+    await addRegistryIndex("mirror", "https://registry-mirror.test/spell-index.v1.json");
+
+    nock("https://registry-mirror.test").get("/spell-index.v1.json").reply(200, {
+      version: "v1",
+      spells: [
+        {
+          id: "fixtures/hello-host",
+          version: "1.0.0",
+          source: "https://spell.test/hello-host.git#main",
+          commit: "AABBCCDDEEFF00112233445566778899AABBCCDD",
+          digest: "sha256:AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899"
+        }
+      ]
+    });
+
+    const resolved = await resolveRegistryInstallSource("registry:fixtures/hello-host@1.0.0", "mirror");
+    expect(resolved).toEqual({
+      source: "https://spell.test/hello-host.git#main",
+      expectedCommit: "AABBCCDDEEFF00112233445566778899AABBCCDD",
+      expectedDigest: "sha256:AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899"
+    });
   });
 
   test("validation failure includes index name and reason", async () => {

@@ -104,6 +104,7 @@ v1 intentionally excludes:
 - registry install supports:
   - `registry:<id>@<version>` (exact)
   - `registry:<id>` and `registry:<id>@latest` (latest)
+  - optional index selection via `spell install registry:<id>... --registry <name>`
 - latest selection is deterministic:
   - semver `x.y.z` numeric compare preferred
   - non-semver fallback uses lexical descending
@@ -114,6 +115,7 @@ v1 intentionally excludes:
   - when `true`, cast denies non-verified signature states (`unsigned`, `untrusted`, `invalid`)
   - this applies even if caller passes `--allow-unsigned`
 - this gives operators a global, host-local enforcement switch for signature strictness.
+- operators can run `spell verify <id> [--version ...]` to validate installed bundle signature/trust state without running `cast`.
 
 ## 17. Execution list time filters
 - execution API list supports optional `from` / `to` ISO-8601 timestamps.

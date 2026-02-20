@@ -14,6 +14,7 @@ import {
 import { listInstalledSpells, readSchemaFromManifest, resolveInstalledBundle, summarizeSchema } from "../bundle/store";
 import { generateSigningKeypair, signBundleFromPrivateKey } from "../signature/signing";
 import { castSpell } from "../runner/cast";
+import { verifyBundleSignature } from "../signature/verify";
 import { inspectLicense, listLicenses, removeLicense, restoreLicense, revokeLicense, upsertLicense } from "../license/store";
 import { loadRuntimePolicy, parseRuntimePolicyFile, runtimePolicyFilePath } from "../policy";
 import {
@@ -40,8 +41,9 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
     .command("install")
     .description("Install a spell bundle from local path, git URL, or registry locator")
     .argument("<source>", "Path, git URL (requires #<ref>), or registry:<id>[@<version|latest>]")
-    .action(async (source: string) => {
-      const result = await installBundle(source);
+    .option("--registry <name>", "Registry index name (for registry:<id> sources)")
+    .action(async (source: string, options: { registry?: string }) => {
+      const result = await installBundle(source, { registryName: options.registry });
       process.stdout.write(`${result.id}@${result.version}\n`);
     });
 
@@ -207,6 +209,27 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
       process.stdout.write("封印\n");
       for (const check of manifest.checks) {
         process.stdout.write(`  type=${check.type} params=${JSON.stringify(check.params)}\n`);
+      }
+    });
+
+  program
+    .command("verify")
+    .description("Verify installed spell signature and trust chain")
+    .argument("<id>", "Spell id")
+    .option("--version <version>", "Specific version")
+    .action(async (id: string, options: { version?: string }) => {
+      const loaded = await resolveInstalledBundle(id, options.version);
+      const result = await verifyBundleSignature(loaded.manifest, loaded.bundlePath);
+
+      process.stdout.write(`id@version: ${loaded.manifest.id}@${loaded.manifest.version}\n`);
+      process.stdout.write(`status: ${result.status}\n`);
+      process.stdout.write(`publisher: ${result.publisher}\n`);
+      process.stdout.write(`key_id: ${result.key_id ?? "-"}\n`);
+      process.stdout.write(`digest: ${result.digest ?? "-"}\n`);
+      process.stdout.write(`message: ${result.message}\n`);
+
+      if (!result.ok) {
+        throw new SpellError(`signature ${result.status}: ${result.message}`);
       }
     });
 

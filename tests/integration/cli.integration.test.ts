@@ -212,6 +212,74 @@ describe("spell cli integration", () => {
     }
   });
 
+  test("registry install can use named registry index via --registry", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    const expectedDigest = `sha256:${(await computeBundleDigest(fixture)).valueHex.toUpperCase()}`;
+    const gitRepo = await createBareGitRepoFromSource(fixture);
+    const gitUrl = "https://spell.test/hello-host.git";
+    const gitSource = `${gitUrl}#main`;
+
+    try {
+      expect(await runCli(["node", "spell", "registry", "set", "https://registry-primary.test/spell-index.v1.json"])).toBe(0);
+      expect(await runCli(["node", "spell", "registry", "add", "mirror", "https://registry-mirror.test/spell-index.v1.json"])).toBe(0);
+
+      nock("https://registry-primary.test").get("/spell-index.v1.json").reply(200, {
+        version: "v1",
+        spells: []
+      });
+
+      nock("https://registry-mirror.test").get("/spell-index.v1.json").reply(200, {
+        version: "v1",
+        spells: [
+          {
+            id: "fixtures/hello-host",
+            version: "1.0.0",
+            source: gitSource,
+            commit: gitRepo.commit.toUpperCase(),
+            digest: expectedDigest
+          }
+        ]
+      });
+
+      await withGitUrlRewrite(gitUrl, gitRepo.remotePath, async () => {
+        expect(
+          await runCli([
+            "node",
+            "spell",
+            "install",
+            "registry:fixtures/hello-host@1.0.0",
+            "--registry",
+            "mirror"
+          ])
+        ).toBe(0);
+      });
+    } finally {
+      await rm(gitRepo.tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("registry install fails when --registry name does not exist", async () => {
+    expect(await runCli(["node", "spell", "registry", "set", "https://registry-primary.test/spell-index.v1.json"])).toBe(0);
+
+    const result = await runCliCapture([
+      "node",
+      "spell",
+      "install",
+      "registry:fixtures/hello-host@1.0.0",
+      "--registry",
+      "missing"
+    ]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("registry index not found: missing");
+  });
+
+  test("local install rejects --registry option", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    const result = await runCliCapture(["node", "spell", "install", fixture, "--registry", "mirror"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("--registry is only supported for registry:<id> install sources");
+  });
+
   test("registry add/remove/validate lifecycle", async () => {
     const defaultUrl = "https://registry.test/spell-index.v1.json";
     const mirrorUrl = "https://registry-mirror.test/spell-index.v1.json";
@@ -1368,6 +1436,16 @@ describe("spell cli integration", () => {
     } finally {
       await rm(bundleDir, { recursive: true, force: true });
     }
+  });
+
+  test("verify command reports unsigned status and exits non-zero for unsigned bundle", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
+
+    const result = await runCliCapture(["node", "spell", "verify", "fixtures/hello-host"]);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain("status: unsigned");
+    expect(result.stderr).toContain("signature unsigned:");
   });
 
   test("cast requires signature by default and --allow-unsigned bypasses for unsigned bundles", async () => {

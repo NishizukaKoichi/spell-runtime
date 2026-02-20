@@ -42,6 +42,7 @@ Manual npx (local package):
 - spell policy set --file <path>
 - spell list
 - spell inspect <id> [--version x.y.z]
+- spell verify <id> [--version x.y.z]
 - spell cast <id> [--version x.y.z] [-p key=value ...] [--input input.json] [--dry-run] [--yes] [--allow-billing] [--allow-unsigned] [--require-signature] [--verbose] [--profile <name>]
 - spell license add <name> <entitlement-token>
 - spell license list
@@ -103,6 +104,7 @@ Registry setup example:
   spell registry validate
   spell registry validate --name mirror
   spell install registry:fixtures/hello-host@1.0.0
+  spell install registry:fixtures/hello-host@1.0.0 --registry mirror
 
 Registry index management rules:
 - index name must be non-empty after trimming and unique.
