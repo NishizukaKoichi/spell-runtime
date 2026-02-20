@@ -1630,6 +1630,8 @@ describe("spell cli integration", () => {
   });
 
   const dockerTest = process.env.SPELL_DOCKER_TESTS === "1" && isDockerDaemonAvailable() ? test : test.skip;
+  const dockerTestTimeoutMs = 120_000;
+
   dockerTest("docker execution succeeds (runner-in-image)", async () => {
     const repoRoot = process.cwd();
 
@@ -1749,7 +1751,7 @@ describe("spell cli integration", () => {
       await rm(dockerContext, { recursive: true, force: true });
       await runCommand("docker", ["rmi", "-f", imageTag], repoRoot).catch(() => undefined);
     }
-  });
+  }, dockerTestTimeoutMs);
 
   dockerTest("oci install succeeds (real docker image source)", async () => {
     const repoRoot = process.cwd();
@@ -1787,7 +1789,7 @@ describe("spell cli integration", () => {
       await rm(dockerContext, { recursive: true, force: true });
       await runCommand("docker", ["rmi", "-f", imageTag], repoRoot).catch(() => undefined);
     }
-  });
+  }, dockerTestTimeoutMs);
 });
 
 async function createBareGitRepoFromSource(
