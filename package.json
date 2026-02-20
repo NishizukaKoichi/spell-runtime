@@ -29,8 +29,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "pack:check": "npm pack --dry-run",
-    "smoke:link": "npm run build && npm link && spell --help",
-    "smoke:npx": "npm run build && npx --yes --package file:. spell --help"
+    "smoke:link": "npm run build && npm link && node \"$(command -v spell)\" --help",
+    "smoke:npx": "npm run build && npm exec --yes --package file:. -- sh -c 'node \"$(command -v spell)\" --help'"
   },
   "publishConfig": {
     "access": "public"
