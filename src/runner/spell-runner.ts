@@ -42,7 +42,9 @@ async function main(): Promise<void> {
 
 export async function runSpellRunner(manifestPath: string, inputPath: string): Promise<RunnerResult> {
   const sourceDir = path.dirname(path.resolve(manifestPath));
-  const workDir = await mkdtemp(path.join(tmpdir(), "spell-runner-"));
+  const workRoot = resolveRunnerWorkRoot();
+  await mkdir(workRoot, { recursive: true });
+  const workDir = await mkdtemp(path.join(workRoot, "spell-runner-"));
 
   const stepResults: StepResult[] = [];
   const outputs: Record<string, unknown> = {};
@@ -113,6 +115,15 @@ export async function runSpellRunner(manifestPath: string, inputPath: string): P
   } finally {
     await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+function resolveRunnerWorkRoot(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = env.SPELL_RUNNER_WORK_ROOT;
+  if (!raw || raw.trim() === "") {
+    return tmpdir();
+  }
+
+  return path.resolve(raw.trim());
 }
 
 async function readInputJson(inputPath: string): Promise<Record<string, unknown>> {

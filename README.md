@@ -287,6 +287,7 @@ Docker mode (v1) details:
   - `--user 65532:65532`
   - `--pids-limit 256`
   - `--tmpfs /tmp:rw,noexec,nosuid,size=64m`
+  - `--tmpfs /spell-work:rw,nosuid,size=64m`
 - hardening env overrides (all optional):
   - `SPELL_DOCKER_NETWORK` (`none|bridge|host`, default `none`)
   - `SPELL_DOCKER_USER` (default `65532:65532`; set empty to disable `--user`)

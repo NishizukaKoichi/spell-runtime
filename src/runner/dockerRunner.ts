@@ -81,6 +81,7 @@ export function buildDockerArgs(
   env: NodeJS.ProcessEnv = process.env
 ): string[] {
   const inputInContainer = "/tmp/spell-input/input.json";
+  const runnerWorkRoot = "/spell-work";
   const envVars = collectEnvVarsToPass(manifest, env);
   const dockerRunConfig = readDockerRunConfig(env);
 
@@ -96,6 +97,8 @@ export function buildDockerArgs(
     "no-new-privileges",
     "--tmpfs",
     "/tmp:rw,noexec,nosuid,size=64m",
+    "--tmpfs",
+    `${runnerWorkRoot}:rw,nosuid,size=64m`,
     "--workdir",
     "/spell",
     "-v",
@@ -103,7 +106,9 @@ export function buildDockerArgs(
     "-v",
     `${path.resolve(tempDir)}:/tmp/spell-input:ro`,
     "-e",
-    `INPUT_JSON=${inputInContainer}`
+    `INPUT_JSON=${inputInContainer}`,
+    "-e",
+    `SPELL_RUNNER_WORK_ROOT=${runnerWorkRoot}`
   ];
 
   if (dockerRunConfig.readOnly) {

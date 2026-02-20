@@ -37,7 +37,8 @@ describe("buildDockerArgs", () => {
     expectFlagValue(args, "--network", "none");
     expectFlagValue(args, "--cap-drop", "ALL");
     expectFlagValue(args, "--security-opt", "no-new-privileges");
-    expectFlagValue(args, "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m");
+    expect(args).toContain("/tmp:rw,noexec,nosuid,size=64m");
+    expect(args).toContain("/spell-work:rw,nosuid,size=64m");
     expect(args).toContain("--read-only");
     expectFlagValue(args, "--user", "65532:65532");
     expectFlagValue(args, "--pids-limit", "256");
@@ -46,6 +47,7 @@ describe("buildDockerArgs", () => {
     expect(args).toContain(`${path.resolve("/bundle")}:/spell:ro`);
     expect(args).toContain(`${path.resolve("/input-dir")}:/tmp/spell-input:ro`);
     expect(args).toContain("INPUT_JSON=/tmp/spell-input/input.json");
+    expect(args).toContain("SPELL_RUNNER_WORK_ROOT=/spell-work");
 
     expect(args).toContain("CONNECTOR_GITHUB_TOKEN=gh-token");
     expect(args).toContain("SPELL_RUNTIME_STEP_TIMEOUT_MS=750");
