@@ -113,6 +113,7 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
     };
 
     const policyDecision = evaluateRuntimePolicy(runtimePolicy, {
+      spell_id: manifest.id,
       publisher: publisherFromId(manifest.id),
       risk: manifest.risk,
       execution: manifest.runtime.execution,

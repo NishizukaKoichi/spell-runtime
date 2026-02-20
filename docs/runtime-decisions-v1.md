@@ -141,3 +141,11 @@ v1 intentionally excludes:
 - scope is intentionally narrow:
   - OCI install smoke (`oci:<image-ref>`)
 - this keeps default validation deterministic while still exercising real Docker paths on every PR/push.
+
+## 20. Spell-level runtime policy allow/deny
+- runtime policy supports spell id controls in `~/.spell/policy.json`:
+  - `spells.allow`: explicit allowlist of spell ids
+  - `spells.deny`: explicit denylist of spell ids
+- deny takes precedence over allow.
+- policy evaluation order remains fail-fast and deterministic:
+  - spell deny/allow -> publisher deny/allow -> risk/runtime/effects/signature -> default allow/deny.

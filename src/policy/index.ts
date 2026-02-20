@@ -19,6 +19,10 @@ const RISK_ORDER: Record<SpellRisk, number> = {
 export interface RuntimePolicyV1 {
   version: "v1";
   default: "allow" | "deny";
+  spells?: {
+    allow?: string[];
+    deny?: string[];
+  };
   publishers?: {
     allow?: string[];
     deny?: string[];
@@ -38,6 +42,7 @@ export interface RuntimePolicyV1 {
 }
 
 export interface RuntimePolicyContext {
+  spell_id: string;
   publisher: string;
   risk: SpellRisk;
   execution: RuntimeExecution;
@@ -76,7 +81,7 @@ export function parseRuntimePolicy(raw: unknown): RuntimePolicyV1 {
   }
 
   const obj = raw as Record<string, unknown>;
-  assertOnlyKeys(obj, ["version", "default", "publishers", "max_risk", "runtime", "effects", "signature"], "policy");
+  assertOnlyKeys(obj, ["version", "default", "spells", "publishers", "max_risk", "runtime", "effects", "signature"], "policy");
 
   const version = readRequiredString(obj, "version");
   if (version !== POLICY_VERSION) {
@@ -88,6 +93,7 @@ export function parseRuntimePolicy(raw: unknown): RuntimePolicyV1 {
     throw invalidPolicy(`default must be 'allow' or 'deny', got '${defaultDecision}'`);
   }
 
+  const spells = parseSpells(obj.spells);
   const publishers = parsePublishers(obj.publishers);
   const maxRisk = parseMaxRisk(obj.max_risk);
   const runtime = parseRuntime(obj.runtime);
@@ -97,6 +103,7 @@ export function parseRuntimePolicy(raw: unknown): RuntimePolicyV1 {
   return {
     version: "v1",
     default: defaultDecision as RuntimePolicyV1["default"],
+    spells,
     publishers,
     max_risk: maxRisk,
     runtime,
@@ -111,6 +118,22 @@ export function evaluateRuntimePolicy(
 ): RuntimePolicyDecision {
   if (!policy) {
     return { allow: true };
+  }
+
+  const denySpells = policy.spells?.deny ?? [];
+  if (denySpells.includes(context.spell_id)) {
+    return {
+      allow: false,
+      reason: `spell '${context.spell_id}' is denied`
+    };
+  }
+
+  const allowSpells = policy.spells?.allow;
+  if (allowSpells && !allowSpells.includes(context.spell_id)) {
+    return {
+      allow: false,
+      reason: `spell '${context.spell_id}' is not allowed`
+    };
   }
 
   const denyPublishers = policy.publishers?.deny ?? [];
@@ -202,6 +225,24 @@ function parsePublishers(raw: unknown): RuntimePolicyV1["publishers"] | undefine
   return {
     allow: parseStringArray(obj.allow, "publishers.allow"),
     deny: parseStringArray(obj.deny, "publishers.deny")
+  };
+}
+
+function parseSpells(raw: unknown): RuntimePolicyV1["spells"] | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw invalidPolicy("spells must be an object");
+  }
+
+  const obj = raw as Record<string, unknown>;
+  assertOnlyKeys(obj, ["allow", "deny"], "spells");
+
+  return {
+    allow: parseStringArray(obj.allow, "spells.allow"),
+    deny: parseStringArray(obj.deny, "spells.deny")
   };
 }
 

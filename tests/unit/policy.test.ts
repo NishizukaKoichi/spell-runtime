@@ -15,6 +15,10 @@ describe("parseRuntimePolicy", () => {
     const policy = parseRuntimePolicy({
       version: "v1",
       default: "allow",
+      spells: {
+        allow: ["fixtures/hello-host"],
+        deny: ["fixtures/blocked"]
+      },
       publishers: {
         allow: ["fixtures"],
         deny: ["blocked"]
@@ -36,6 +40,10 @@ describe("parseRuntimePolicy", () => {
     expect(policy).toEqual({
       version: "v1",
       default: "allow",
+      spells: {
+        allow: ["fixtures/hello-host"],
+        deny: ["fixtures/blocked"]
+      },
       publishers: {
         allow: ["fixtures"],
         deny: ["blocked"]
@@ -72,6 +80,7 @@ describe("parseRuntimePolicy", () => {
 
 describe("evaluateRuntimePolicy", () => {
   const context = {
+    spell_id: "fixtures/hello-host",
     publisher: "fixtures",
     risk: "medium" as const,
     execution: "host" as const,
@@ -95,6 +104,52 @@ describe("evaluateRuntimePolicy", () => {
     expect(evaluateRuntimePolicy(policy, context)).toEqual({
       allow: false,
       reason: "publisher 'fixtures' is denied"
+    });
+  });
+
+  test("denies spell on deny list", () => {
+    const policy = parseRuntimePolicy({
+      version: "v1",
+      default: "allow",
+      spells: {
+        deny: ["fixtures/hello-host"]
+      }
+    });
+
+    expect(evaluateRuntimePolicy(policy, context)).toEqual({
+      allow: false,
+      reason: "spell 'fixtures/hello-host' is denied"
+    });
+  });
+
+  test("denies spell not listed in allow list", () => {
+    const policy = parseRuntimePolicy({
+      version: "v1",
+      default: "allow",
+      spells: {
+        allow: ["fixtures/other-spell"]
+      }
+    });
+
+    expect(evaluateRuntimePolicy(policy, context)).toEqual({
+      allow: false,
+      reason: "spell 'fixtures/hello-host' is not allowed"
+    });
+  });
+
+  test("spell deny list takes precedence over allow list", () => {
+    const policy = parseRuntimePolicy({
+      version: "v1",
+      default: "allow",
+      spells: {
+        allow: ["fixtures/hello-host"],
+        deny: ["fixtures/hello-host"]
+      }
+    });
+
+    expect(evaluateRuntimePolicy(policy, context)).toEqual({
+      allow: false,
+      reason: "spell 'fixtures/hello-host' is denied"
     });
   });
 

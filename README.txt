@@ -191,6 +191,7 @@ Policy file format (~/.spell/policy.json):
 {
   "version": "v1",
   "default": "allow",
+  "spells": { "allow": ["samples/call-webhook"], "deny": ["samples/dangerous"] },
   "publishers": { "allow": ["samples"], "deny": ["blocked"] },
   "max_risk": "high",
   "runtime": { "allow_execution": ["host", "docker"] },
@@ -208,6 +209,8 @@ Notes:
 - missing policy file => allow by default
 - invalid policy file => invalid policy: ...
 - policy rejection => policy denied: <reason>
+- spells.allow denies casts whose spell id is not listed
+- spells.deny denies listed spell ids and takes precedence over spells.allow
 - effects.deny_mutations=true denies any spell effect with mutates=true
 - effects.allow_types denies any spell effect type not listed
 - effects.deny_types denies listed effect types and takes precedence over effects.allow_types
