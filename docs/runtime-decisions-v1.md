@@ -135,3 +135,10 @@ v1 intentionally excludes:
   - `type: "oci"`
   - `source: "oci:<image-ref>"`
   - `image: "<image-ref>"`
+
+## 19. CI Docker smoke coverage
+- CI includes a dedicated `docker-smoke` job separate from main verify gates.
+- scope is intentionally narrow:
+  - docker runner execution smoke (`runner-in-image`)
+  - OCI install smoke (`oci:<image-ref>`)
+- this keeps default validation deterministic while still exercising real Docker paths on every PR/push.

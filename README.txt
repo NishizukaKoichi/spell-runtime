@@ -272,6 +272,13 @@ Use these effect.type words where possible:
 - advanced templating language (only {{INPUT.*}} and {{ENV.*}})
 - docker env passthrough beyond connector tokens and SPELL_RUNTIME_STEP_TIMEOUT_MS
 
+8.0 Docker smoke tests
+Docker-backed integration tests are opt-in locally and enabled in CI docker-smoke:
+
+  SPELL_DOCKER_TESTS=1 pnpm exec vitest run tests/integration/cli.integration.test.ts -t "runner-in-image|real docker image source"
+
+Note: these tests require a reachable Docker daemon (docker info must succeed).
+
 8.1 Signature (sign + verify)
 spell cast requires signature verification by default. To bypass this for unsigned bundle workflows:
   spell cast <id> --allow-unsigned ...

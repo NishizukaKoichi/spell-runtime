@@ -33,3 +33,31 @@ jobs:
           pnpm run lint
           pnpm run build
           pnpm test
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify Docker daemon
+        run: docker info
+
+      - name: Docker OCI + runner smoke
+        env:
+          SPELL_DOCKER_TESTS: "1"
+        run: pnpm exec vitest run tests/integration/cli.integration.test.ts -t "runner-in-image|real docker image source"

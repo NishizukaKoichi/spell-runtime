@@ -1,7 +1,7 @@
 import { chmod, copyFile, cp, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import nock from "nock";
@@ -1629,7 +1629,7 @@ describe("spell cli integration", () => {
     }
   });
 
-  const dockerTest = process.env.SPELL_DOCKER_TESTS === "1" ? test : test.skip;
+  const dockerTest = process.env.SPELL_DOCKER_TESTS === "1" && isDockerDaemonAvailable() ? test : test.skip;
   dockerTest("docker execution succeeds (runner-in-image)", async () => {
     const repoRoot = process.cwd();
 
@@ -1746,6 +1746,44 @@ describe("spell cli integration", () => {
       expect(String(outputs["step.hello.stdout"] ?? "")).toContain("hello-docker");
     } finally {
       await rm(packDir, { recursive: true, force: true });
+      await rm(dockerContext, { recursive: true, force: true });
+      await runCommand("docker", ["rmi", "-f", imageTag], repoRoot).catch(() => undefined);
+    }
+  });
+
+  dockerTest("oci install succeeds (real docker image source)", async () => {
+    const repoRoot = process.cwd();
+    const fixture = path.join(repoRoot, "fixtures/spells/hello-host");
+    const dockerContext = await mkdtemp(path.join(tmpdir(), "spell-oci-context-"));
+    const imageTag = `spell-runtime-test-oci:${Date.now()}`;
+
+    try {
+      await cp(fixture, path.join(dockerContext, "spell"), { recursive: true });
+      await writeFile(
+        path.join(dockerContext, "Dockerfile"),
+        [
+          "FROM node:20-slim",
+          "COPY spell/ /spell/",
+          ""
+        ].join("\n"),
+        "utf8"
+      );
+
+      await runCommand("docker", ["build", "-t", imageTag, dockerContext], repoRoot);
+
+      expect(await runCli(["node", "spell", "install", `oci:${imageTag}`])).toBe(0);
+      expect(await runCli(["node", "spell", "inspect", "fixtures/hello-host"])).toBe(0);
+
+      const sourceMetadata = JSON.parse(
+        await readFile(installedSourceMetadataPath(tempHome, "fixtures/hello-host", "1.0.0"), "utf8")
+      ) as Record<string, unknown>;
+      expect(sourceMetadata).toMatchObject({
+        type: "oci",
+        source: `oci:${imageTag}`,
+        image: imageTag
+      });
+      expect(Number.isNaN(Date.parse(String(sourceMetadata.installed_at)))).toBe(false);
+    } finally {
       await rm(dockerContext, { recursive: true, force: true });
       await runCommand("docker", ["rmi", "-f", imageTag], repoRoot).catch(() => undefined);
     }
@@ -1950,6 +1988,19 @@ async function runCommand(
   }
 
   return { code, stdout, stderr };
+}
+
+function isDockerDaemonAvailable(): boolean {
+  try {
+    const probe = spawnSync("docker", ["info"], {
+      shell: false,
+      stdio: "ignore",
+      env: process.env
+    });
+    return probe.status === 0;
+  } catch {
+    return false;
+  }
 }
 
 async function createHostShellBundle(
