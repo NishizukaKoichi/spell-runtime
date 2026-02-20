@@ -40,6 +40,10 @@ export interface RegistryInstallRef {
 }
 
 export interface RegistryInstallSource {
+  id: string;
+  version: string;
+  registryName: string;
+  registryUrl: string;
   source: string;
   expectedCommit?: string;
   expectedDigest?: string;
@@ -353,6 +357,10 @@ export async function resolveRegistryInstallSource(
   enforceRegistryRequiredPins(entry, resolvedRef, requiredPinsPolicy);
 
   return {
+    id: resolvedRef.id,
+    version: resolvedRef.version,
+    registryName: selectedIndex.name,
+    registryUrl: selectedIndex.url,
     source,
     expectedCommit: entry.commit,
     expectedDigest: entry.digest

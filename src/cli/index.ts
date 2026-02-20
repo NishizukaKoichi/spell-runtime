@@ -6,6 +6,7 @@ import { Command } from "commander";
 import { installBundle } from "../bundle/install";
 import {
   addRegistryIndex,
+  resolveRegistryInstallSource,
   readRegistryConfigIfExists,
   removeRegistryIndex,
   setDefaultRegistryIndex,
@@ -87,6 +88,20 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
       for (const result of results) {
         process.stdout.write(`${result.name}\t${result.url}\t${result.spellCount}\n`);
       }
+    });
+
+  registry
+    .command("resolve")
+    .description("Resolve a registry locator to concrete source and pins")
+    .argument("<source>", "registry:<id> or registry:<id>@<version|latest>")
+    .option("--name <name>", "Registry index name (default: default)")
+    .action(async (source: string, options: { name?: string }) => {
+      const resolved = await resolveRegistryInstallSource(source, options.name);
+      process.stdout.write(`registry\t${resolved.registryName}\t${resolved.registryUrl}\n`);
+      process.stdout.write(`id@version\t${resolved.id}@${resolved.version}\n`);
+      process.stdout.write(`source\t${resolved.source}\n`);
+      process.stdout.write(`commit\t${resolved.expectedCommit ?? "-"}\n`);
+      process.stdout.write(`digest\t${resolved.expectedDigest ?? "-"}\n`);
     });
 
   registry

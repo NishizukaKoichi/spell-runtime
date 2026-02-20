@@ -357,6 +357,10 @@ describe("registry config lifecycle", () => {
 
     const resolved = await resolveRegistryInstallSource("registry:fixtures/hello-host@1.0.0", "mirror");
     expect(resolved).toEqual({
+      id: "fixtures/hello-host",
+      version: "1.0.0",
+      registryName: "mirror",
+      registryUrl: "https://registry-mirror.test/spell-index.v1.json",
       source: "https://spell.test/hello-host.git#main",
       expectedCommit: "AABBCCDDEEFF00112233445566778899AABBCCDD",
       expectedDigest: "sha256:AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899"

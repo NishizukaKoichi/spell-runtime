@@ -146,7 +146,7 @@ describe("execution api integration", () => {
     }
   });
 
-  test("GET /api/spell-executions supports status/button_id/tenant_id/limit filters", async () => {
+  test("GET /api/spell-executions supports status/button_id/spell_id/tenant_id/limit filters", async () => {
     const server = await startExecutionApiServer({
       port: 0,
       registryPath: path.join(process.cwd(), "examples/button-registry.v1.json")
@@ -167,7 +167,7 @@ describe("execution api integration", () => {
       await waitForExecution(server.port, failedExecutionId);
 
       const successOnly = await fetch(
-        `http://127.0.0.1:${server.port}/api/spell-executions?status=succeeded&button_id=publish_site_high_risk&tenant_id=default&limit=1`
+        `http://127.0.0.1:${server.port}/api/spell-executions?status=succeeded&button_id=publish_site_high_risk&spell_id=samples/publish-site&tenant_id=default&limit=1`
       );
       expect(successOnly.status).toBe(200);
       const successPayload = (await successOnly.json()) as {
@@ -184,6 +184,16 @@ describe("execution api integration", () => {
       };
       expect(failedPayload.executions.some((execution) => execution.execution_id === failedExecutionId)).toBe(true);
       expect(failedPayload.executions.every((execution) => execution.status === "failed")).toBe(true);
+
+      const spellFiltered = await fetch(
+        `http://127.0.0.1:${server.port}/api/spell-executions?spell_id=samples/repo-ops`
+      );
+      expect(spellFiltered.status).toBe(200);
+      const spellFilteredPayload = (await spellFiltered.json()) as {
+        executions: Array<{ execution_id: string; spell_id: string }>;
+      };
+      expect(spellFilteredPayload.executions.some((execution) => execution.execution_id === failedExecutionId)).toBe(true);
+      expect(spellFilteredPayload.executions.every((execution) => execution.spell_id === "samples/repo-ops")).toBe(true);
 
       const none = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions?tenant_id=team_b`);
       expect(none.status).toBe(200);

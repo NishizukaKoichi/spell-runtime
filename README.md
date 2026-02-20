@@ -50,6 +50,7 @@ npm run smoke:npx
 - `spell registry add <name> <url>`
 - `spell registry remove <name>`
 - `spell registry validate [--name <name>]`
+- `spell registry resolve <source> [--name <name>]`
 - `spell policy show`
 - `spell policy validate --file <path>`
 - `spell policy set --file <path>`
@@ -497,7 +498,7 @@ By default it listens on `:8787` and reads:
   - `GET /` (minimal Receipts UI)
   - `GET /ui/app.js` (UI client script)
   - `GET /api/buttons` (includes `allowed_tenants` for each button; `null` when unrestricted)
-- `GET /api/spell-executions` (`status`, `button_id`, `tenant_id`, `limit`, `from`, `to` query supported)
+- `GET /api/spell-executions` (`status`, `button_id`, `spell_id`, `tenant_id`, `limit`, `from`, `to` query supported)
 - `POST /api/spell-executions` (supports optional `Idempotency-Key` header)
 - `GET /api/spell-executions/:execution_id`
 - `GET /api/spell-executions/:execution_id/output?path=step.<name>.(stdout|json[.dot.path])`

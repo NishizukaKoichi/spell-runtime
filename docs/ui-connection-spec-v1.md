@@ -60,7 +60,7 @@ See sample:
 ## 6. Execution API Contract
 ## 6.0 Discovery and UI endpoints
 - `GET /api/buttons`
-- `GET /api/spell-executions` (query: `status`, `button_id`, `tenant_id`, `limit`, `from`, `to`)
+- `GET /api/spell-executions` (query: `status`, `button_id`, `spell_id`, `tenant_id`, `limit`, `from`, `to`)
 - `GET /api/spell-executions/:execution_id`
 - `GET /api/spell-executions/:execution_id/output?path=step.<name>.(stdout|json[.dot.path])`
 - `POST /api/spell-executions/:execution_id/cancel`

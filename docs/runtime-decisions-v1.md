@@ -109,6 +109,7 @@ v1 intentionally excludes:
   - semver `x.y.z` numeric compare preferred
   - non-semver fallback uses lexical descending
 - required pin enforcement (`commit`/`digest`) applies to the resolved concrete version entry.
+- operators can inspect resolution without install via `spell registry resolve registry:<id>...`.
 
 ## 16. Signature governance policy
 - runtime policy supports `signature.require_verified`:
@@ -119,5 +120,6 @@ v1 intentionally excludes:
 
 ## 17. Execution list time filters
 - execution API list supports optional `from` / `to` ISO-8601 timestamps.
+- execution API list supports optional `spell_id` exact filter.
 - filtering is applied on `created_at` (inclusive bounds).
 - invalid timestamps or reversed ranges fail with `INVALID_QUERY`.

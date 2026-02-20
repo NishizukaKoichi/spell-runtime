@@ -94,6 +94,7 @@ interface StartExecutionApiServerResult {
 interface ListExecutionsQuery {
   statuses: Set<JobStatus> | null;
   buttonId: string | null;
+  spellId: string | null;
   tenantId: string | null;
   limit: number;
   fromAtMs: number | null;
@@ -666,6 +667,7 @@ export async function startExecutionApiServer(
           filters: {
             status: effectiveQuery.statuses ? Array.from(effectiveQuery.statuses) : [],
             button_id: effectiveQuery.buttonId ?? null,
+            spell_id: effectiveQuery.spellId ?? null,
             tenant_id: effectiveQuery.tenantId ?? null,
             limit: effectiveQuery.limit,
             from: effectiveQuery.fromAtMs !== null ? new Date(effectiveQuery.fromAtMs).toISOString() : null,
@@ -1366,6 +1368,7 @@ function findExistingJobByIdempotencyKey(
 function parseListExecutionsQuery(params: URLSearchParams): ListExecutionsQuery {
   const statusParam = params.get("status");
   const buttonIdParam = params.get("button_id");
+  const spellIdParam = params.get("spell_id");
   const tenantIdParam = params.get("tenant_id");
   const limitParam = params.get("limit");
   const fromParam = params.get("from");
@@ -1397,6 +1400,7 @@ function parseListExecutionsQuery(params: URLSearchParams): ListExecutionsQuery 
   }
 
   const buttonId = buttonIdParam && buttonIdParam.trim() !== "" ? buttonIdParam.trim() : null;
+  const spellId = spellIdParam && spellIdParam.trim() !== "" ? spellIdParam.trim() : null;
   const tenantId = tenantIdParam && tenantIdParam.trim() !== "" ? tenantIdParam.trim() : null;
   if (tenantId && !AUTH_KEY_SEGMENT_PATTERN.test(tenantId)) {
     throw new Error(`invalid tenant_id filter: ${tenantId}`);
@@ -1411,6 +1415,7 @@ function parseListExecutionsQuery(params: URLSearchParams): ListExecutionsQuery 
   return {
     statuses,
     buttonId,
+    spellId,
     tenantId,
     limit,
     fromAtMs,
@@ -1423,6 +1428,9 @@ function matchJobByQuery(job: ExecutionJob, query: ListExecutionsQuery): boolean
     return false;
   }
   if (query.buttonId && job.button_id !== query.buttonId) {
+    return false;
+  }
+  if (query.spellId && job.spell_id !== query.spellId) {
     return false;
   }
   if (query.tenantId && job.tenant_id !== query.tenantId) {

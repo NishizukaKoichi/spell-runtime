@@ -258,6 +258,38 @@ describe("spell cli integration", () => {
     }
   });
 
+  test("registry resolve prints concrete source, pins, and resolved version", async () => {
+    const indexUrl = "https://registry.test/spell-index.v1.json";
+    expect(await runCli(["node", "spell", "registry", "set", indexUrl])).toBe(0);
+
+    nock("https://registry.test").get("/spell-index.v1.json").reply(200, {
+      version: "v1",
+      spells: [
+        {
+          id: "fixtures/hello-host",
+          version: "1.0.0",
+          source: "https://spell.test/hello-host.git#v1.0.0",
+          commit: "AABBCCDDEEFF00112233445566778899AABBCCDD",
+          digest: "sha256:AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899"
+        },
+        {
+          id: "fixtures/hello-host",
+          version: "1.2.0",
+          source: "https://spell.test/hello-host.git#v1.2.0",
+          commit: "BBCCDDEEFF00112233445566778899AABBCCDDEE",
+          digest: "sha256:BBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AA"
+        }
+      ]
+    });
+
+    const result = await runCliCapture(["node", "spell", "registry", "resolve", "registry:fixtures/hello-host"]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("registry\tdefault\thttps://registry.test/spell-index.v1.json");
+    expect(result.stdout).toContain("id@version\tfixtures/hello-host@1.2.0");
+    expect(result.stdout).toContain("source\thttps://spell.test/hello-host.git#v1.2.0");
+    expect(result.stdout).toContain("commit\tBBCCDDEEFF00112233445566778899AABBCCDDEE");
+  });
+
   test("registry install fails when --registry name does not exist", async () => {
     expect(await runCli(["node", "spell", "registry", "set", "https://registry-primary.test/spell-index.v1.json"])).toBe(0);
 
