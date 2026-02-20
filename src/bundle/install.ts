@@ -62,7 +62,7 @@ async function resolveRegistrySourceIfNeeded(
   return resolveRegistryInstallSource(sourceInput, registryName);
 }
 
-type InstallProvenance = LocalInstallProvenance | GitInstallProvenance;
+type InstallProvenance = LocalInstallProvenance | GitInstallProvenance | OciInstallProvenance;
 
 interface LocalInstallProvenance {
   type: "local";
@@ -74,6 +74,12 @@ interface GitInstallProvenance {
   source: string;
   ref: string;
   commit: string;
+}
+
+interface OciInstallProvenance {
+  type: "oci";
+  source: string;
+  image: string;
 }
 
 async function installBundleFromSource(sourceRoot: string, provenance: InstallProvenance): Promise<InstallResult> {
@@ -158,6 +164,10 @@ function isRegistrySource(value: string): boolean {
 }
 
 async function resolveInstallSource(input: string, options: InstallSourceOptions = {}): Promise<InstallSource> {
+  if (isOciSource(input)) {
+    return extractOciSource(input);
+  }
+
   if (isGitSource(input)) {
     return cloneGitSource(input, options.expectedRegistryCommit);
   }
@@ -182,6 +192,77 @@ async function resolveInstallSource(input: string, options: InstallSourceOptions
 
 function isGitSource(value: string): boolean {
   return /^https:\/\//i.test(value) || /^ssh:\/\//i.test(value) || /^git@[^:]+:.+/.test(value);
+}
+
+function isOciSource(value: string): boolean {
+  return value.startsWith("oci:");
+}
+
+function parseOciSource(source: string): string {
+  if (!isOciSource(source)) {
+    throw new SpellError(`invalid oci source: ${source} (expected oci:<image-ref>)`);
+  }
+
+  const image = source.slice("oci:".length).trim();
+  if (!image) {
+    throw new SpellError(`invalid oci source: ${source} (expected oci:<image-ref>)`);
+  }
+
+  return image;
+}
+
+async function extractOciSource(source: string): Promise<InstallSource> {
+  const image = parseOciSource(source);
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "spell-install-"));
+  const extractedRoot = path.join(tempRoot, "bundle");
+  await mkdir(extractedRoot, { recursive: true });
+
+  let containerId: string | undefined;
+  try {
+    const containerStdout = await runDockerCommand(
+      ["create", image],
+      source,
+      `failed to create docker container for OCI source '${source}'`
+    );
+    containerId = containerStdout.trim();
+    if (!containerId) {
+      throw new SpellError(`failed to create docker container for OCI source '${source}': empty container id`);
+    }
+
+    await runDockerCommand(
+      ["cp", `${containerId}:/spell/.`, extractedRoot],
+      source,
+      `failed to extract OCI source '${source}' (expected bundle at /spell in image)`
+    );
+
+    await runDockerCommand(
+      ["rm", "-f", containerId],
+      source,
+      `failed to cleanup docker container for OCI source '${source}'`
+    );
+    containerId = undefined;
+
+    const sourceRoot = await realpath(extractedRoot);
+    return {
+      sourceRoot,
+      provenance: {
+        type: "oci",
+        source,
+        image
+      },
+      cleanup: async () => {
+        await rm(tempRoot, { recursive: true, force: true });
+      }
+    };
+  } catch (error) {
+    if (containerId) {
+      await runDockerCommand(["rm", "-f", containerId], source, `failed to cleanup docker container '${containerId}'`).catch(
+        () => undefined
+      );
+    }
+    await rm(tempRoot, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 async function cloneGitSource(source: string, expectedRegistryCommit?: string): Promise<InstallSource> {
@@ -300,6 +381,49 @@ async function runGitCommand(args: string[], source: string, failureMessage: str
     child.once("close", (exitCode) => {
       if ((exitCode ?? 1) !== 0) {
         const detail = (stderr.trim() || stdout.trim() || `git exited with code ${exitCode ?? 1}`).replace(/\s+/g, " ");
+        reject(new SpellError(`${failureMessage}: ${detail}`));
+        return;
+      }
+
+      resolve();
+    });
+  });
+
+  return stdout;
+}
+
+async function runDockerCommand(args: string[], source: string, failureMessage: string): Promise<string> {
+  const child = spawn("docker", args, {
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  let stdout = "";
+  let stderr = "";
+
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    child.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") {
+        reject(new SpellError("docker executable not found: install Docker and ensure it is on PATH"));
+        return;
+      }
+
+      reject(new SpellError(`failed to run docker command for '${source}': ${error.message}`));
+    });
+
+    child.once("close", (exitCode) => {
+      if ((exitCode ?? 1) !== 0) {
+        const detail = (stderr.trim() || stdout.trim() || `docker exited with code ${exitCode ?? 1}`).replace(
+          /\s+/g,
+          " "
+        );
         reject(new SpellError(`${failureMessage}: ${detail}`));
         return;
       }

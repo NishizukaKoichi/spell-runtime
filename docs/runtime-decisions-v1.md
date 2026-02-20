@@ -123,3 +123,15 @@ v1 intentionally excludes:
 - execution API list supports optional `spell_id` exact filter.
 - filtering is applied on `created_at` (inclusive bounds).
 - invalid timestamps or reversed ranges fail with `INVALID_QUERY`.
+
+## 18. OCI install channel
+- `spell install` supports `oci:<image-ref>` in addition to local/git/registry sources.
+- OCI install extraction is deterministic and minimal:
+  - `docker create <image-ref>`
+  - `docker cp <container>:/spell/. <temp-bundle-dir>`
+  - `docker rm -f <container>`
+- runtime expects bundle root at `/spell` in the image (`/spell/spell.yaml` required).
+- install provenance records OCI source as:
+  - `type: "oci"`
+  - `source: "oci:<image-ref>"`
+  - `image: "<image-ref>"`

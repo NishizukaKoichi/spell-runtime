@@ -81,6 +81,8 @@ npm run smoke:npx
 `spell install <source>` accepts:
 
 - local bundle paths (existing behavior)
+- OCI image refs:
+  - `oci:<image-ref>`
 - registry locators with explicit id+version:
   - `registry:<id>@<version>`
   - `registry:<id>` (implicit latest)
@@ -95,6 +97,12 @@ Git sources must include `#<ref>`. If omitted, install fails with:
 - `git source requires explicit ref (#<ref>)`
 
 When a git source is provided, runtime clones the repository, checks out the requested ref, resolves the checked-out commit SHA (`git rev-parse HEAD`), and installs from that checkout.
+
+When an OCI source is provided, runtime:
+
+- runs `docker create <image-ref>`
+- copies `/spell` from the container filesystem (`docker cp <container>:/spell/. ...`)
+- removes the temporary container and installs from the extracted bundle root
 
 For registry installs, each index entry may include pins:
 
@@ -167,8 +175,10 @@ Minimal registry index schema:
 Limitations:
 
 - `git` must be installed and available on `PATH`.
+- `docker` must be installed and available on `PATH` for `oci:<image-ref>` installs.
 - clone/auth/network behavior is delegated to your local `git` configuration.
 - `spell.yaml` must exist at the cloned repository root (subdirectory installs are not supported).
+- OCI install expects `spell.yaml` at `/spell/spell.yaml` inside the image.
 
 ## Storage Layout
 
@@ -180,10 +190,11 @@ Limitations:
 
 `source.json` captures install provenance:
 
-- `type`: `local` or `git`
+- `type`: `local` or `git` or `oci`
 - `source`: original install input
 - `ref`: requested git ref (git installs only)
 - `commit`: resolved git commit SHA (git installs only)
+- `image`: OCI image ref (OCI installs only)
 - `installed_at`: install timestamp (ISO-8601)
 
 `id_key` is fixed as `base64url(utf8(id))`.

@@ -123,6 +123,33 @@ describe("spell cli integration", () => {
     }
   });
 
+  test("install supports OCI image sources", async () => {
+    const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
+    const ociSource = "oci:ghcr.io/spell-runtime/examples/hello-host:1.0.0";
+
+    await withFakeDockerBundle(fixture, async () => {
+      expect(await runCli(["node", "spell", "install", ociSource])).toBe(0);
+    });
+
+    expect(await runCli(["node", "spell", "inspect", "fixtures/hello-host"])).toBe(0);
+
+    const sourceMetadata = JSON.parse(
+      await readFile(installedSourceMetadataPath(tempHome, "fixtures/hello-host", "1.0.0"), "utf8")
+    ) as Record<string, unknown>;
+    expect(sourceMetadata).toMatchObject({
+      type: "oci",
+      source: ociSource,
+      image: "ghcr.io/spell-runtime/examples/hello-host:1.0.0"
+    });
+    expect(Number.isNaN(Date.parse(String(sourceMetadata.installed_at)))).toBe(false);
+  });
+
+  test("install rejects malformed OCI source", async () => {
+    const result = await runCliCapture(["node", "spell", "install", "oci:"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("invalid oci source");
+  });
+
   test("registry set/show and install resolves a registry source", async () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/hello-host");
     const expectedDigest = `sha256:${(await computeBundleDigest(fixture)).valueHex.toUpperCase()}`;
@@ -1776,6 +1803,96 @@ async function withGitUrlRewrite<T>(gitUrl: string, targetRepoPath: string, run:
     }
 
     await rm(configDir, { recursive: true, force: true });
+  }
+}
+
+async function withFakeDockerBundle<T>(bundleDir: string, run: () => Promise<T>): Promise<T> {
+  const binDir = await mkdtemp(path.join(tmpdir(), "spell-fake-docker-"));
+  const dockerPath = path.join(binDir, "docker");
+  const previousPath = process.env.PATH;
+  const previousBundle = process.env.SPELL_TEST_FAKE_DOCKER_BUNDLE_DIR;
+  const fakeContainerId = "spell-fake-container";
+
+  const script = `#!/usr/bin/env node
+const { cp, mkdir, readdir } = require("node:fs/promises");
+const path = require("node:path");
+
+async function copyBundleInto(targetDir, bundleDir) {
+  await mkdir(targetDir, { recursive: true });
+  const entries = await readdir(bundleDir, { withFileTypes: true });
+  for (const entry of entries) {
+    await cp(path.join(bundleDir, entry.name), path.join(targetDir, entry.name), { recursive: true });
+  }
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  const command = args[0];
+  const bundleDir = process.env.SPELL_TEST_FAKE_DOCKER_BUNDLE_DIR;
+  if (!bundleDir) {
+    process.stderr.write("missing SPELL_TEST_FAKE_DOCKER_BUNDLE_DIR\\n");
+    process.exit(1);
+    return;
+  }
+
+  if (command === "create") {
+    if (!args[1]) {
+      process.stderr.write("missing image\\n");
+      process.exit(1);
+      return;
+    }
+    process.stdout.write("${fakeContainerId}\\n");
+    return;
+  }
+
+  if (command === "cp") {
+    const source = args[1];
+    const target = args[2];
+    if (source !== "${fakeContainerId}:/spell/." || !target) {
+      process.stderr.write("unsupported cp args\\n");
+      process.exit(1);
+      return;
+    }
+    await copyBundleInto(target, bundleDir);
+    return;
+  }
+
+  if (command === "rm") {
+    return;
+  }
+
+  process.stderr.write("unsupported fake docker command\\n");
+  process.exit(1);
+}
+
+main().catch((error) => {
+  process.stderr.write(String(error?.message ?? error) + "\\n");
+  process.exit(1);
+});
+`;
+
+  await writeFile(dockerPath, script, "utf8");
+  await chmod(dockerPath, 0o755);
+
+  process.env.PATH = `${binDir}${path.delimiter}${process.env.PATH ?? ""}`;
+  process.env.SPELL_TEST_FAKE_DOCKER_BUNDLE_DIR = bundleDir;
+
+  try {
+    return await run();
+  } finally {
+    if (previousPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = previousPath;
+    }
+
+    if (previousBundle === undefined) {
+      delete process.env.SPELL_TEST_FAKE_DOCKER_BUNDLE_DIR;
+    } else {
+      process.env.SPELL_TEST_FAKE_DOCKER_BUNDLE_DIR = previousBundle;
+    }
+
+    await rm(binDir, { recursive: true, force: true });
   }
 }
 
