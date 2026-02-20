@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { access, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { access, chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadManifestFromDir } from "../bundle/manifest";
@@ -160,6 +160,7 @@ async function copyDirectoryNoSymlinks(sourceDir: string, targetDir: string): Pr
 
     if (info.isFile()) {
       await copyFile(srcPath, dstPath);
+      await chmod(dstPath, info.mode & 0o777);
       continue;
     }
 
