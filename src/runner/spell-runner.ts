@@ -9,7 +9,7 @@ import { CheckResult, StepResult } from "../types";
 import { SpellError } from "../util/errors";
 import { detectHostPlatform, platformMatches } from "../util/platform";
 import { validateInputAgainstSchema } from "./input";
-import { executeSteps } from "./executeSteps";
+import { executeSteps, StepExecutionError } from "./executeSteps";
 
 interface RunnerResult {
   success: boolean;
@@ -88,6 +88,12 @@ export async function runSpellRunner(manifestPath: string, inputPath: string): P
       checks
     };
   } catch (error) {
+    if (error instanceof StepExecutionError) {
+      stepResults.push(...error.stepResults);
+      Object.assign(outputs, error.outputs);
+      checks = error.checks;
+    }
+
     return {
       success: false,
       error: (error as Error).message,

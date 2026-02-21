@@ -39,6 +39,7 @@ export interface SpellStep {
   uses: StepUses;
   name: string;
   run: string;
+  rollback?: string;
   depends_on?: string[];
   when?: SpellStepCondition;
 }

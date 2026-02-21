@@ -133,6 +133,12 @@ export async function loadManifestFromDir(bundlePath: string): Promise<{ manifes
     const runPath = path.resolve(bundlePath, step.run);
     ensurePathWithin(bundlePath, runPath, `step '${step.name}' run path`);
     await access(runPath);
+
+    if (step.rollback) {
+      const rollbackPath = path.resolve(bundlePath, step.rollback);
+      ensurePathWithin(bundlePath, rollbackPath, `step '${step.name}' rollback path`);
+      await access(rollbackPath);
+    }
   }
 
   const typedManifest: SpellBundleManifest = {
@@ -187,6 +193,7 @@ function parseSteps(rawSteps: unknown[]): SpellStep[] {
     seenNames.add(name);
 
     const run = readRequiredString(obj, "run");
+    const rollback = parseOptionalString(obj["rollback"], `steps[${idx}].rollback`);
     const dependsOn = parseOptionalStringArray(obj["depends_on"], `steps[${idx}].depends_on`);
     const when = parseOptionalStepCondition(obj["when"], `steps[${idx}].when`);
 
@@ -194,6 +201,7 @@ function parseSteps(rawSteps: unknown[]): SpellStep[] {
       uses: uses as SpellStep["uses"],
       name,
       run,
+      rollback,
       depends_on: dependsOn,
       when
     };
@@ -256,6 +264,18 @@ function parseOptionalMaxParallelSteps(raw: unknown): number | undefined {
   }
 
   return raw;
+}
+
+function parseOptionalString(raw: unknown, label: string): string | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new SpellError(`${label} must be a non-empty string`);
+  }
+
+  return raw.trim();
 }
 
 function parseOptionalStringArray(raw: unknown, label: string): string[] | undefined {

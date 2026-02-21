@@ -45,7 +45,6 @@ This document records stable architecture decisions for Spell Runtime v1.
 v1 intentionally excludes:
 - registry marketplace/discovery UX
 - real billing execution
-- DAG/parallel/rollback
 - advanced template language
 
 ## 10. Execution API auth and retention controls
@@ -159,3 +158,9 @@ v1 intentionally excludes:
   - `output_path` + `equals`/`not_equals`
 - `when.output_path` requires explicit `depends_on` on the referenced step, preventing race conditions.
 - skipped steps are treated as successful audit events (`success=true`, `message="skipped by condition"`), and do not emit output keys.
+
+## 22. Step rollback model
+- steps may define `rollback` as an executable path under the bundle root.
+- if a cast fails after one or more steps executed, rollback runs best-effort in reverse execution order for steps that define rollback.
+- rollback step names are recorded as `rollback.<originalStepName>` in step results.
+- rollback failures are also recorded in step results; runtime still returns the original execution failure.

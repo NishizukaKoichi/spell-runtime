@@ -29,6 +29,19 @@ export interface DockerRunnerResult {
   checks: CheckResult[];
 }
 
+export class DockerExecutionError extends SpellError {
+  readonly stepResults: StepResult[];
+  readonly outputs: Record<string, unknown>;
+  readonly checks: CheckResult[];
+
+  constructor(message: string, stepResults: StepResult[], outputs: Record<string, unknown>, checks: CheckResult[]) {
+    super(message);
+    this.stepResults = stepResults;
+    this.outputs = outputs;
+    this.checks = checks;
+  }
+}
+
 export async function runDocker(
   manifest: SpellBundleManifest,
   bundlePath: string,
@@ -52,16 +65,30 @@ export async function runDocker(
       throw new SpellError(formatExecutionTimeoutMessage(executionTimeoutMs));
     }
 
+    let parsed: DockerRunnerResult | undefined;
+    if (stdout.trim() !== "") {
+      try {
+        parsed = parseRunnerJson(stdout);
+      } catch {
+        if (code === 0) {
+          throw new SpellError("failed to parse docker runner output JSON");
+        }
+      }
+    }
+
+    if (parsed) {
+      if (!parsed.success) {
+        const message = parsed.error ?? (stderr.trim() || `docker exited with code ${code}`);
+        throw new DockerExecutionError(message, parsed.stepResults, parsed.outputs, parsed.checks);
+      }
+      return parsed;
+    }
+
     if (code !== 0) {
       throw new SpellError(stderr.trim() || `docker exited with code ${code}`);
     }
 
-    const parsed = parseRunnerJson(stdout);
-    if (!parsed.success) {
-      throw new SpellError(parsed.error ?? "docker spell failed");
-    }
-
-    return parsed;
+    throw new SpellError("docker runner produced no output");
   } catch (error) {
     const message = (error as Error).message;
     if (message.includes("ENOENT") || message.includes("spawn docker")) {

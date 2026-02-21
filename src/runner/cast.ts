@@ -7,13 +7,14 @@ import { SpellError } from "../util/errors";
 import { detectDockerPlatformForHost, detectHostPlatform, platformMatches } from "../util/platform";
 import { buildInput, validateInputAgainstSchema } from "./input";
 import { runHost } from "./hostRunner";
-import { runDocker } from "./dockerRunner";
+import { DockerExecutionError, runDocker } from "./dockerRunner";
 import { renderExecutionSummary } from "./summary";
 import { enforceSignatureOrThrow, verifyBundleSignature } from "../signature/verify";
 import { publisherFromId } from "../signature/trustStore";
 import { findMatchingLicenseForBilling } from "../license/store";
 import { readRuntimeExecutionTimeoutMs, readRuntimeInputMaxBytes } from "./runtimeLimits";
 import { evaluateRuntimePolicy, loadRuntimePolicy } from "../policy";
+import { StepExecutionError } from "./executeSteps";
 
 export interface CastResult {
   executionId: string;
@@ -220,6 +221,20 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
       outputs: runResult.outputs
     };
   } catch (error) {
+    if (error instanceof StepExecutionError) {
+      log.steps = error.stepResults;
+      log.outputs = error.outputs;
+      if (error.checks.length > 0) {
+        log.checks = error.checks;
+      }
+    }
+
+    if (error instanceof DockerExecutionError) {
+      log.steps = error.stepResults;
+      log.outputs = error.outputs;
+      log.checks = error.checks;
+    }
+
     log.error = (error as Error).message;
     log.finished_at = new Date().toISOString();
     await writeExecutionLog(log);

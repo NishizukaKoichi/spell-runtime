@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { executeSteps } from "../../src/runner/executeSteps";
+import { executeSteps, StepExecutionError } from "../../src/runner/executeSteps";
 import { SpellBundleManifest, SpellStep, StepResult } from "../../src/types";
 
 describe("executeSteps", () => {
@@ -78,6 +78,80 @@ describe("executeSteps", () => {
     });
 
     expect(maxRunning).toBe(2);
+  });
+
+  test("runs rollback steps in reverse order after failure", async () => {
+    const called: string[] = [];
+    const manifest = makeManifest([
+      { uses: "shell", name: "prepare", run: "steps/prepare.js", rollback: "steps/rollback-prepare.js" },
+      { uses: "shell", name: "deploy", run: "steps/deploy.js", depends_on: ["prepare"] }
+    ]);
+
+    let caught: unknown;
+    try {
+      await executeSteps(manifest, "/tmp", {}, {}, {
+        shellRunner: async (step) => {
+          called.push(step.name);
+          if (step.name === "deploy") {
+            throw new Error("deploy failed");
+          }
+          return {
+            stepResult: okStepResult(step),
+            stdout: step.name.toUpperCase(),
+            stderr: ""
+          };
+        }
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(StepExecutionError);
+    const executionError = caught as StepExecutionError;
+    expect(called).toEqual(["prepare", "deploy", "rollback.prepare"]);
+    expect(executionError.outputs["step.prepare.stdout"]).toBe("PREPARE");
+    expect(executionError.stepResults.map((entry) => entry.stepName)).toEqual(["prepare", "rollback.prepare"]);
+  });
+
+  test("records rollback failures and keeps running remaining rollbacks", async () => {
+    const called: string[] = [];
+    const manifest = makeManifest([
+      { uses: "shell", name: "a", run: "steps/a.js", rollback: "steps/rollback-a.js" },
+      { uses: "shell", name: "b", run: "steps/b.js", depends_on: ["a"], rollback: "steps/rollback-b.js" },
+      { uses: "shell", name: "c", run: "steps/c.js", depends_on: ["b"] }
+    ]);
+
+    let caught: unknown;
+    try {
+      await executeSteps(manifest, "/tmp", {}, {}, {
+        shellRunner: async (step) => {
+          called.push(step.name);
+          if (step.name === "c") {
+            throw new Error("c failed");
+          }
+          if (step.name === "rollback.b") {
+            throw new Error("rollback b failed");
+          }
+          return {
+            stepResult: okStepResult(step),
+            stdout: step.name,
+            stderr: ""
+          };
+        }
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(StepExecutionError);
+    const executionError = caught as StepExecutionError;
+    expect(called).toEqual(["a", "b", "c", "rollback.b", "rollback.a"]);
+    expect(executionError.stepResults.map((entry) => entry.stepName)).toEqual(["a", "b", "rollback.b", "rollback.a"]);
+    const rollbackB = executionError.stepResults.find((entry) => entry.stepName === "rollback.b");
+    expect(rollbackB?.success).toBe(false);
+    expect(rollbackB?.message).toContain("rollback failed");
+    const rollbackA = executionError.stepResults.find((entry) => entry.stepName === "rollback.a");
+    expect(rollbackA?.success).toBe(true);
   });
 });
 

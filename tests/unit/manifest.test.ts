@@ -90,6 +90,21 @@ describe("loadManifestFromDir", () => {
 
     await expect(loadManifestFromDir(dir)).rejects.toThrow("when.output_path requires depends_on 'first'");
   });
+
+  test("fails when rollback path does not exist", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "spell-manifest-"));
+    await writeMinimalBundle(
+      dir,
+      [
+        "  - uses: shell",
+        "    name: first",
+        "    run: steps/first.js",
+        "    rollback: steps/missing-rollback.js"
+      ].join("\n")
+    );
+
+    await expect(loadManifestFromDir(dir)).rejects.toThrow(/missing-rollback\.js/);
+  });
 });
 
 async function writeMinimalBundle(dir: string, stepsYamlBody: string): Promise<void> {

@@ -263,6 +263,7 @@ Runtime supports optional DAG + conditional step execution:
   - at least one of equals / not_equals
   - output_path format: step.<name>.(stdout|json[.dot.path])
   - when output_path is used, that source step must be listed in depends_on
+- steps[].rollback (optional shell executable path run on failure)
 
 Example:
 runtime:
@@ -284,6 +285,8 @@ steps:
 Notes:
 - steps with false conditions are recorded as success=true with message skipped by condition
 - skipped steps do not emit outputs[step.<name>.*]
+- on step failure, configured rollback steps run in reverse execution order (rollback.<stepName>)
+- rollback failures are recorded, then the original step failure is returned
 
 6. Windows policy
 - host mode does not assume bash/sh.
@@ -303,7 +306,6 @@ Use these effect.type words where possible:
 - name search or ambiguous resolution (id only)
 - registry discovery/marketplace UX integration
 - real billing execution (Stripe)
-- rollback/self-healing
 - advanced templating language (only {{INPUT.*}} and {{ENV.*}})
 - docker env passthrough beyond connector tokens and SPELL_RUNTIME_STEP_TIMEOUT_MS
 

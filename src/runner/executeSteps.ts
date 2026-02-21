@@ -1,5 +1,5 @@
 import path from "node:path";
-import { SpellBundleManifest, SpellStep, StepResult } from "../types";
+import { CheckResult, SpellBundleManifest, SpellStep, StepResult } from "../types";
 import { runHttpStep, HttpStepExecution } from "../steps/httpStep";
 import { runShellStep, ShellStepExecution } from "../steps/shellStep";
 import { SpellError } from "../util/errors";
@@ -32,8 +32,22 @@ export interface ExecuteStepsOptions {
 interface StepExecutionOutcome {
   stepName: string;
   stepResult: StepResult;
+  executed: boolean;
   outputKey?: string;
   outputValue?: unknown;
+}
+
+export class StepExecutionError extends SpellError {
+  readonly outputs: Record<string, unknown>;
+  readonly stepResults: StepResult[];
+  readonly checks: CheckResult[];
+
+  constructor(message: string, outputs: Record<string, unknown>, stepResults: StepResult[], checks: CheckResult[] = []) {
+    super(message);
+    this.outputs = outputs;
+    this.stepResults = stepResults;
+    this.checks = checks;
+  }
 }
 
 export async function executeSteps(
@@ -42,9 +56,10 @@ export async function executeSteps(
   input: Record<string, unknown>,
   env: NodeJS.ProcessEnv,
   options: ExecuteStepsOptions = {}
-): Promise<{ outputs: Record<string, unknown>; stepResults: StepResult[] }> {
+): Promise<{ outputs: Record<string, unknown>; stepResults: StepResult[]; executedStepNames: string[] }> {
   const outputs: Record<string, unknown> = {};
   const stepResults: StepResult[] = [];
+  const executedStepNames: string[] = [];
   const pending = new Map(manifest.steps.map((step) => [step.name, step]));
   const completed = new Set<string>();
   const indexByName = new Map(manifest.steps.map((step, idx) => [step.name, idx]));
@@ -54,44 +69,69 @@ export async function executeSteps(
   const shellRunner = options.shellRunner ?? runShellStep;
   const httpRunner = options.httpRunner ?? runHttpStep;
 
-  while (pending.size > 0) {
-    const ready = manifest.steps
-      .filter((step) => pending.has(step.name))
-      .filter((step) => (step.depends_on ?? []).every((dependency) => completed.has(dependency)));
+  try {
+    while (pending.size > 0) {
+      const ready = manifest.steps
+        .filter((step) => pending.has(step.name))
+        .filter((step) => (step.depends_on ?? []).every((dependency) => completed.has(dependency)));
 
-    if (ready.length === 0) {
-      const unresolved = Array.from(pending.keys()).join(",");
-      throw new SpellError(`step dependency deadlock: ${unresolved}`);
-    }
-
-    ready.sort((a, b) => (indexByName.get(a.name) ?? 0) - (indexByName.get(b.name) ?? 0));
-
-    for (let cursor = 0; cursor < ready.length; cursor += maxParallel) {
-      const batch = ready.slice(cursor, cursor + maxParallel);
-      const settled = await Promise.allSettled(
-        batch.map(async (step) =>
-          runStepWithCondition(step, bundlePath, input, env, outputs, executionDeadlineMs, options.executionTimeoutMs, shellRunner, httpRunner)
-        )
-      );
-
-      const rejected = settled.find((entry): entry is PromiseRejectedResult => entry.status === "rejected");
-      if (rejected) {
-        throw rejected.reason;
+      if (ready.length === 0) {
+        const unresolved = Array.from(pending.keys()).join(",");
+        throw new SpellError(`step dependency deadlock: ${unresolved}`);
       }
 
-      for (const entry of settled) {
-        const outcome = (entry as PromiseFulfilledResult<StepExecutionOutcome>).value;
-        stepResults.push(outcome.stepResult);
-        if (outcome.outputKey !== undefined) {
-          outputs[outcome.outputKey] = outcome.outputValue;
+      ready.sort((a, b) => (indexByName.get(a.name) ?? 0) - (indexByName.get(b.name) ?? 0));
+
+      for (let cursor = 0; cursor < ready.length; cursor += maxParallel) {
+        const batch = ready.slice(cursor, cursor + maxParallel);
+        const settled = await Promise.allSettled(
+          batch.map(async (step) =>
+            runStepWithCondition(step, bundlePath, input, env, outputs, executionDeadlineMs, options.executionTimeoutMs, shellRunner, httpRunner)
+          )
+        );
+
+        let rejectedReason: unknown;
+        for (const entry of settled) {
+          if (entry.status === "rejected") {
+            if (rejectedReason === undefined) {
+              rejectedReason = entry.reason;
+            }
+            continue;
+          }
+
+          const outcome = entry.value;
+          stepResults.push(outcome.stepResult);
+          if (outcome.outputKey !== undefined) {
+            outputs[outcome.outputKey] = outcome.outputValue;
+          }
+          if (outcome.executed) {
+            executedStepNames.push(outcome.stepName);
+          }
+          pending.delete(outcome.stepName);
+          completed.add(outcome.stepName);
         }
-        pending.delete(outcome.stepName);
-        completed.add(outcome.stepName);
+
+        if (rejectedReason !== undefined) {
+          throw rejectedReason;
+        }
       }
     }
+  } catch (error) {
+    const rollbackResults = await runConfiguredRollbacks(
+      manifest,
+      bundlePath,
+      env,
+      executedStepNames,
+      executionDeadlineMs,
+      options.executionTimeoutMs,
+      shellRunner
+    );
+    stepResults.push(...rollbackResults);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new StepExecutionError(message, { ...outputs }, [...stepResults]);
   }
 
-  return { outputs, stepResults };
+  return { outputs, stepResults, executedStepNames };
 }
 
 async function runStepWithCondition(
@@ -117,7 +157,8 @@ async function runStepWithCondition(
         finished_at: now,
         success: true,
         message: "skipped by condition"
-      }
+      },
+      executed: false
     };
   }
 
@@ -136,6 +177,7 @@ async function runStepWithCondition(
     return {
       stepName: step.name,
       stepResult: result.stepResult,
+      executed: true,
       outputKey: `step.${step.name}.stdout`,
       outputValue: result.stdout
     };
@@ -146,6 +188,7 @@ async function runStepWithCondition(
     return {
       stepName: step.name,
       stepResult: result.stepResult,
+      executed: true,
       outputKey: `step.${step.name}.json`,
       outputValue: result.responseBody
     };
@@ -219,4 +262,69 @@ async function runHttpStepWithExecutionTimeout(
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function runConfiguredRollbacks(
+  manifest: SpellBundleManifest,
+  bundlePath: string,
+  env: NodeJS.ProcessEnv,
+  executedStepNames: string[],
+  executionDeadlineMs: number | undefined,
+  executionTimeoutMs: number | undefined,
+  shellRunner: ShellRunner = runShellStep
+): Promise<StepResult[]> {
+  const rollbackResults: StepResult[] = [];
+  const stepMap = new Map(manifest.steps.map((step) => [step.name, step]));
+
+  for (let i = executedStepNames.length - 1; i >= 0; i -= 1) {
+    const stepName = executedStepNames[i];
+    const sourceStep = stepMap.get(stepName);
+    if (!sourceStep || !sourceStep.rollback) {
+      continue;
+    }
+
+    const rollbackStep: SpellStep = {
+      uses: "shell",
+      name: `rollback.${sourceStep.name}`,
+      run: sourceStep.rollback
+    };
+    const rollbackPath = path.resolve(bundlePath, rollbackStep.run);
+    const remainingExecutionMs = executionDeadlineMs !== undefined ? executionDeadlineMs - Date.now() : undefined;
+    const startedAt = new Date().toISOString();
+
+    if (remainingExecutionMs !== undefined && remainingExecutionMs <= 0) {
+      rollbackResults.push({
+        stepName: rollbackStep.name,
+        uses: rollbackStep.uses,
+        started_at: startedAt,
+        finished_at: startedAt,
+        success: false,
+        message: formatExecutionTimeoutMessage(executionTimeoutMs as number, rollbackStep.name)
+      });
+      break;
+    }
+
+    try {
+      const result = await shellRunner(rollbackStep, rollbackPath, bundlePath, env, {
+        maxDurationMs: remainingExecutionMs,
+        executionTimeoutMs
+      });
+      rollbackResults.push({
+        ...result.stepResult,
+        stepName: rollbackStep.name
+      });
+    } catch (error) {
+      const finishedAt = new Date().toISOString();
+      rollbackResults.push({
+        stepName: rollbackStep.name,
+        uses: rollbackStep.uses,
+        started_at: startedAt,
+        finished_at: finishedAt,
+        success: false,
+        message: `rollback failed: ${(error as Error).message}`
+      });
+    }
+  }
+
+  return rollbackResults;
 }
