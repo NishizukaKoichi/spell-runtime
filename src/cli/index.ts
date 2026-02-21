@@ -221,7 +221,7 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
 
       process.stdout.write("実行\n");
       process.stdout.write(
-        `  execution=${manifest.runtime.execution} docker_image=${manifest.runtime.docker_image ?? "-"} platforms=${manifest.runtime.platforms.join(",")}\n`
+        `  execution=${manifest.runtime.execution} docker_image=${manifest.runtime.docker_image ?? "-"} platforms=${manifest.runtime.platforms.join(",")} max_parallel_steps=${manifest.runtime.max_parallel_steps ?? 1}\n`
       );
 
       process.stdout.write("封印\n");

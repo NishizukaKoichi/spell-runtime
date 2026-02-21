@@ -1,7 +1,7 @@
 import { access, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { load } from "js-yaml";
-import { SpellBundleManifest, SpellCheck, SpellStep } from "../types";
+import { SpellBundleManifest, SpellCheck, SpellStep, SpellStepCondition } from "../types";
 import { SpellError } from "../util/errors";
 
 const RISK_VALUES = new Set(["low", "medium", "high", "critical"]);
@@ -112,6 +112,9 @@ export async function loadManifestFromDir(bundlePath: string): Promise<{ manifes
     throw new SpellError("runtime.docker_image is required when runtime.execution=docker");
   }
 
+  const maxParallelStepsRaw = runtimeRaw["max_parallel_steps"];
+  const maxParallelSteps = parseOptionalMaxParallelSteps(maxParallelStepsRaw);
+
   const steps = parseSteps(readRequiredArray(manifest, "steps"));
   const checks = parseChecks(readRequiredArray(manifest, "checks"));
 
@@ -150,7 +153,8 @@ export async function loadManifestFromDir(bundlePath: string): Promise<{ manifes
     runtime: {
       execution: execution as SpellBundleManifest["runtime"]["execution"],
       platforms,
-      docker_image: dockerImage
+      docker_image: dockerImage,
+      max_parallel_steps: maxParallelSteps
     },
     steps,
     checks
@@ -165,8 +169,7 @@ function parseSteps(rawSteps: unknown[]): SpellStep[] {
   }
 
   const seenNames = new Set<string>();
-
-  return rawSteps.map((entry, idx) => {
+  const steps = rawSteps.map((entry, idx) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       throw new SpellError(`steps[${idx}] must be an object`);
     }
@@ -184,13 +187,20 @@ function parseSteps(rawSteps: unknown[]): SpellStep[] {
     seenNames.add(name);
 
     const run = readRequiredString(obj, "run");
+    const dependsOn = parseOptionalStringArray(obj["depends_on"], `steps[${idx}].depends_on`);
+    const when = parseOptionalStepCondition(obj["when"], `steps[${idx}].when`);
 
     return {
       uses: uses as SpellStep["uses"],
       name,
-      run
+      run,
+      depends_on: dependsOn,
+      when
     };
   });
+
+  validateStepDependencies(steps);
+  return steps;
 }
 
 function parseChecks(rawChecks: unknown[]): SpellCheck[] {
@@ -234,6 +244,146 @@ function resolveInputsSchema(bundlePath: string, inputSchemaPath: string): strin
   }
 
   return resolved;
+}
+
+function parseOptionalMaxParallelSteps(raw: unknown): number | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1 || raw > 32) {
+    throw new SpellError("runtime.max_parallel_steps must be an integer between 1 and 32");
+  }
+
+  return raw;
+}
+
+function parseOptionalStringArray(raw: unknown, label: string): string[] | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(raw)) {
+    throw new SpellError(`${label} must be an array of strings`);
+  }
+
+  const out = raw.map((value, idx) => {
+    if (typeof value !== "string" || !value.trim()) {
+      throw new SpellError(`${label}[${idx}] must be a non-empty string`);
+    }
+    return value.trim();
+  });
+
+  return out.length > 0 ? out : undefined;
+}
+
+function parseOptionalStepCondition(raw: unknown, label: string): SpellStepCondition | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new SpellError(`${label} must be an object`);
+  }
+
+  const condition = raw as Record<string, unknown>;
+  const allowedKeys = new Set(["input_path", "output_path", "equals", "not_equals"]);
+  for (const key of Object.keys(condition)) {
+    if (!allowedKeys.has(key)) {
+      throw new SpellError(`${label}.${key} is not supported`);
+    }
+  }
+
+  const inputPath = condition["input_path"];
+  const outputPath = condition["output_path"];
+  const hasInputPath = inputPath !== undefined;
+  const hasOutputPath = outputPath !== undefined;
+  if (hasInputPath === hasOutputPath) {
+    throw new SpellError(`${label} must define exactly one of input_path or output_path`);
+  }
+
+  if (hasInputPath && (typeof inputPath !== "string" || !inputPath.trim())) {
+    throw new SpellError(`${label}.input_path must be a non-empty string`);
+  }
+  if (hasOutputPath && (typeof outputPath !== "string" || !outputPath.trim())) {
+    throw new SpellError(`${label}.output_path must be a non-empty string`);
+  }
+
+  const hasEquals = Object.prototype.hasOwnProperty.call(condition, "equals");
+  const hasNotEquals = Object.prototype.hasOwnProperty.call(condition, "not_equals");
+  if (!hasEquals && !hasNotEquals) {
+    throw new SpellError(`${label} must define equals or not_equals`);
+  }
+
+  return {
+    input_path: hasInputPath ? (inputPath as string).trim() : undefined,
+    output_path: hasOutputPath ? (outputPath as string).trim() : undefined,
+    equals: hasEquals ? condition["equals"] : undefined,
+    not_equals: hasNotEquals ? condition["not_equals"] : undefined
+  };
+}
+
+function validateStepDependencies(steps: SpellStep[]): void {
+  const nameSet = new Set(steps.map((step) => step.name));
+  const indexByName = new Map(steps.map((step, idx) => [step.name, idx]));
+  const dependents = new Map<string, string[]>();
+  const inDegree = new Map<string, number>();
+
+  for (const step of steps) {
+    const deps = step.depends_on ?? [];
+    const seenDeps = new Set<string>();
+    for (const dep of deps) {
+      if (!nameSet.has(dep)) {
+        throw new SpellError(`step '${step.name}' depends_on unknown step '${dep}'`);
+      }
+      if (dep === step.name) {
+        throw new SpellError(`step '${step.name}' depends_on must not include itself`);
+      }
+      if (seenDeps.has(dep)) {
+        throw new SpellError(`step '${step.name}' has duplicate depends_on '${dep}'`);
+      }
+      seenDeps.add(dep);
+      const list = dependents.get(dep) ?? [];
+      list.push(step.name);
+      dependents.set(dep, list);
+    }
+
+    if (step.when?.output_path) {
+      const match = /^step\.([^.]+)\.(stdout|json)(?:\..+)?$/.exec(step.when.output_path);
+      if (!match) {
+        throw new SpellError(`step '${step.name}' when.output_path is invalid: ${step.when.output_path}`);
+      }
+      const sourceStep = match[1];
+      if (!nameSet.has(sourceStep)) {
+        throw new SpellError(`step '${step.name}' when.output_path references unknown step '${sourceStep}'`);
+      }
+      if (!seenDeps.has(sourceStep)) {
+        throw new SpellError(`step '${step.name}' when.output_path requires depends_on '${sourceStep}'`);
+      }
+    }
+
+    inDegree.set(step.name, deps.length);
+  }
+
+  const queue = steps.filter((step) => (inDegree.get(step.name) ?? 0) === 0).map((step) => step.name);
+  let visited = 0;
+
+  while (queue.length > 0) {
+    queue.sort((a, b) => (indexByName.get(a) ?? 0) - (indexByName.get(b) ?? 0));
+    const current = queue.shift() as string;
+    visited += 1;
+    for (const dependent of dependents.get(current) ?? []) {
+      const nextDegree = (inDegree.get(dependent) ?? 0) - 1;
+      inDegree.set(dependent, nextDegree);
+      if (nextDegree === 0) {
+        queue.push(dependent);
+      }
+    }
+  }
+
+  if (visited !== steps.length) {
+    throw new SpellError("steps contains cyclic depends_on references");
+  }
 }
 
 function ensurePathWithin(root: string, target: string, label: string): void {

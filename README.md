@@ -300,6 +300,42 @@ Docker mode (v1) details:
   - `SPELL_DOCKER_CPUS` (default empty; when set adds `--cpus`)
 - environment variables passed from host -> container are restricted to connector tokens (`CONNECTOR_<NAME>_TOKEN`) plus `SPELL_RUNTIME_STEP_TIMEOUT_MS`.
 
+### Step Graph (v3 core)
+
+Runtime now supports optional DAG + conditional step execution:
+
+- `runtime.max_parallel_steps` (optional, `1..32`, default `1`)
+- `steps[].depends_on` (optional array of step names)
+- `steps[].when` (optional condition object)
+  - exactly one of `input_path` or `output_path`
+  - at least one of `equals` / `not_equals`
+  - `output_path` format: `step.<name>.(stdout|json[.dot.path])`
+  - when `output_path` is used, that source step must be listed in `depends_on`
+
+Example:
+
+```yaml
+runtime:
+  execution: host
+  platforms: [darwin/arm64]
+  max_parallel_steps: 4
+steps:
+  - uses: shell
+    name: build
+    run: steps/build.js
+  - uses: shell
+    name: deploy
+    run: steps/deploy.js
+    depends_on: [build]
+    when:
+      input_path: deploy.enabled
+      equals: true
+```
+
+Notes:
+- steps with false conditions are recorded as `success=true` with message `skipped by condition`
+- skipped steps do not emit `outputs[step.<name>.*]`
+
 ## Windows Policy
 
 - host mode does not assume bash/sh.
@@ -322,7 +358,7 @@ Use these `effect.type` words where possible:
 - name search or ambiguous resolution (id only)
 - registry discovery/marketplace UX integration
 - real billing execution (Stripe)
-- DAG/parallel/rollback/self-healing
+- rollback/self-healing
 - advanced templating language (only `{{INPUT.*}}` and `{{ENV.*}}`)
 - docker env passthrough beyond connector tokens and `SPELL_RUNTIME_STEP_TIMEOUT_MS`
 

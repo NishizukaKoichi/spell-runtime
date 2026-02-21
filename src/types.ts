@@ -25,12 +25,22 @@ export interface SpellRuntime {
   execution: RuntimeExecution;
   platforms: string[];
   docker_image?: string;
+  max_parallel_steps?: number;
+}
+
+export interface SpellStepCondition {
+  input_path?: string;
+  output_path?: string;
+  equals?: unknown;
+  not_equals?: unknown;
 }
 
 export interface SpellStep {
   uses: StepUses;
   name: string;
   run: string;
+  depends_on?: string[];
+  when?: SpellStepCondition;
 }
 
 export interface SpellCheck {

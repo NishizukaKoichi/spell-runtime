@@ -5,12 +5,11 @@ import path from "node:path";
 import { loadManifestFromDir } from "../bundle/manifest";
 import { readSchemaFromManifest } from "../bundle/store";
 import { evaluateChecks } from "../checks/evaluate";
-import { runHttpStep } from "../steps/httpStep";
-import { runShellStep } from "../steps/shellStep";
 import { CheckResult, StepResult } from "../types";
 import { SpellError } from "../util/errors";
 import { detectHostPlatform, platformMatches } from "../util/platform";
 import { validateInputAgainstSchema } from "./input";
+import { executeSteps } from "./executeSteps";
 
 interface RunnerResult {
   success: boolean;
@@ -72,25 +71,9 @@ export async function runSpellRunner(manifestPath: string, inputPath: string): P
       INPUT_JSON: inputPath
     };
 
-    for (const step of manifest.steps) {
-      const runPath = path.resolve(workDir, step.run);
-
-      if (step.uses === "shell") {
-        const result = await runShellStep(step, runPath, workDir, env);
-        stepResults.push(result.stepResult);
-        outputs[`step.${step.name}.stdout`] = result.stdout;
-        continue;
-      }
-
-      if (step.uses === "http") {
-        const result = await runHttpStep(step, runPath, input, env);
-        stepResults.push(result.stepResult);
-        outputs[`step.${step.name}.json`] = result.responseBody;
-        continue;
-      }
-
-      throw new SpellError(`unsupported step type: ${step.uses}`);
-    }
+    const stepsRun = await executeSteps(manifest, workDir, input, env);
+    stepResults.push(...stepsRun.stepResults);
+    Object.assign(outputs, stepsRun.outputs);
 
     checks = await evaluateChecks(manifest.checks, workDir, outputs, true);
     const failed = checks.filter((entry) => !entry.success);

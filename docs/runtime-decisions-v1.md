@@ -149,3 +149,13 @@ v1 intentionally excludes:
 - deny takes precedence over allow.
 - policy evaluation order remains fail-fast and deterministic:
   - spell deny/allow -> publisher deny/allow -> risk/runtime/effects/signature -> default allow/deny.
+
+## 21. Step DAG / parallel / condition model
+- step graph uses `steps[].depends_on` references by step name.
+- cycle detection is enforced at install/load time.
+- optional `runtime.max_parallel_steps` controls concurrency (`1` default).
+- optional `steps[].when` supports guarded execution using:
+  - `input_path` + `equals`/`not_equals`
+  - `output_path` + `equals`/`not_equals`
+- `when.output_path` requires explicit `depends_on` on the referenced step, preventing race conditions.
+- skipped steps are treated as successful audit events (`success=true`, `message="skipped by condition"`), and do not emit output keys.
