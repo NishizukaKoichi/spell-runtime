@@ -112,6 +112,8 @@ describe("execution api integration", () => {
       expect(script).toContain("/retry");
       expect(script).toContain("/events");
       expect(script).toContain("startExecutionStream");
+      expect(script).toContain("/api/spell-executions/events");
+      expect(script).toContain("startListStream");
       expect(script).toContain("Retry links:");
     } finally {
       await server.close();
@@ -253,6 +255,117 @@ describe("execution api integration", () => {
       expect(invalid.status).toBe(400);
       const invalidPayload = (await invalid.json()) as Record<string, unknown>;
       expect(invalidPayload.error_code).toBe("INVALID_QUERY");
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("GET /api/spell-executions/events streams filtered execution list updates", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json")
+    });
+
+    try {
+      const streamPromise = readExecutionListStreamEvents(
+        `http://127.0.0.1:${server.port}/api/spell-executions/events?status=succeeded&limit=20`,
+        2200
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const executionId = await createExecution(server.port, {
+        button_id: "publish_site_high_risk",
+        actor_role: "admin",
+        confirmation: { risk_acknowledged: true }
+      });
+      await waitForExecution(server.port, executionId);
+
+      const events = await streamPromise;
+      expect(events.some((event) => event.event === "snapshot")).toBe(true);
+      const executionSeen = events
+        .filter((event) => event.event === "snapshot" || event.event === "executions")
+        .map((event) => event.data)
+        .some((payload) => {
+          if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+            return false;
+          }
+          const executions = (payload as { executions?: Array<{ execution_id?: string }> }).executions;
+          if (!Array.isArray(executions)) {
+            return false;
+          }
+          return executions.some((execution) => execution.execution_id === executionId);
+        });
+      expect(executionSeen).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("GET /api/spell-executions/events enforces tenant scope for auth keys", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json"),
+      authKeys: ["team_a:operator=team-a-op-token", "team_b:operator=team-b-op-token"]
+    });
+
+    try {
+      const createdA = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-a-op-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "call_webhook_demo",
+          actor_role: "admin",
+          dry_run: true
+        })
+      });
+      expect(createdA.status).toBe(202);
+      const payloadA = (await createdA.json()) as Record<string, unknown>;
+      const executionA = String(payloadA.execution_id);
+      await waitForExecution(server.port, executionA, "team-a-op-token");
+
+      const createdB = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-b-op-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "call_webhook_demo",
+          actor_role: "admin",
+          dry_run: true
+        })
+      });
+      expect(createdB.status).toBe(202);
+      const payloadB = (await createdB.json()) as Record<string, unknown>;
+      const executionB = String(payloadB.execution_id);
+      await waitForExecution(server.port, executionB, "team-b-op-token");
+
+      const events = await readExecutionListStreamEvents(
+        `http://127.0.0.1:${server.port}/api/spell-executions/events?limit=50`,
+        1000,
+        "team-a-op-token"
+      );
+      const snapshots = events.filter((event) => event.event === "snapshot" || event.event === "executions");
+      expect(snapshots.length).toBeGreaterThan(0);
+      for (const snapshot of snapshots) {
+        const data = snapshot.data;
+        if (!data || typeof data !== "object" || Array.isArray(data)) {
+          continue;
+        }
+        const executions = (data as { executions?: Array<{ tenant_id?: string; execution_id?: string }> }).executions;
+        if (!Array.isArray(executions)) {
+          continue;
+        }
+        for (const execution of executions) {
+          expect(execution.tenant_id).toBe("team_a");
+          expect(execution.execution_id).not.toBe(executionB);
+        }
+      }
+
+      const forbidden = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions/events?tenant_id=team_b`, {
+        headers: { authorization: "Bearer team-a-op-token" }
+      });
+      expect(forbidden.status).toBe(403);
+      const forbiddenPayload = (await forbidden.json()) as Record<string, unknown>;
+      expect(forbiddenPayload.error_code).toBe("TENANT_FORBIDDEN");
     } finally {
       await server.close();
     }
@@ -1845,6 +1958,56 @@ function parseSseEvents(raw: string): Array<{ event: string; data: unknown }> {
   }
 
   return events;
+}
+
+async function readExecutionListStreamEvents(
+  url: string,
+  durationMs: number,
+  token?: string
+): Promise<Array<{ event: string; data: unknown }>> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, durationMs);
+
+  let streamRaw = "";
+  try {
+    const response = await fetch(url, {
+      headers: token ? { authorization: `Bearer ${token}` } : undefined,
+      signal: controller.signal
+    });
+    expect(response.status).toBe(200);
+    expect(String(response.headers.get("content-type") ?? "")).toContain("text/event-stream");
+    if (!response.body) {
+      return [];
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) {
+          break;
+        }
+        streamRaw += decoder.decode(next.value, { stream: true });
+      }
+    } finally {
+      await reader.cancel().catch(() => undefined);
+    }
+  } catch (error) {
+    const aborted =
+      error instanceof Error
+        ? error.name === "AbortError"
+        : typeof error === "object" && error !== null && "name" in error && (error as { name?: string }).name === "AbortError";
+    if (!aborted) {
+      throw error;
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+
+  return parseSseEvents(streamRaw);
 }
 
 async function createHostShellBundle(

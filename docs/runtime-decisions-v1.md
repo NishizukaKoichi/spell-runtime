@@ -189,3 +189,7 @@ v1 intentionally excludes:
   - `terminal`: final snapshot, then stream closes
 - stream is tenant-scoped under auth keys:
   - non-admin cross-tenant requests fail with `TENANT_FORBIDDEN`.
+- execution API also exposes `GET /api/spell-executions/events` for filtered execution list streaming:
+  - `snapshot`: initial list payload
+  - `executions`: changed list payloads
+  - uses same query filters/scoping as `GET /api/spell-executions`.

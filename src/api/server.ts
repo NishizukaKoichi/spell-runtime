@@ -657,26 +657,102 @@ export async function startExecutionApiServer(
           });
         }
 
-        const effectiveQuery = scoped.query;
-        const executions = Array.from(jobs.values())
-          .filter((job) => matchJobByQuery(job, effectiveQuery))
-          .sort((a, b) => b.created_at.localeCompare(a.created_at))
-          .slice(0, effectiveQuery.limit)
-          .map((job) => summarizeJob(job));
-
+        const payload = buildExecutionListPayload(jobs, scoped.query);
         return sendJson(res, 200, {
           ok: true,
-          filters: {
-            status: effectiveQuery.statuses ? Array.from(effectiveQuery.statuses) : [],
-            button_id: effectiveQuery.buttonId ?? null,
-            spell_id: effectiveQuery.spellId ?? null,
-            tenant_id: effectiveQuery.tenantId ?? null,
-            limit: effectiveQuery.limit,
-            from: effectiveQuery.fromAtMs !== null ? new Date(effectiveQuery.fromAtMs).toISOString() : null,
-            to: effectiveQuery.toAtMs !== null ? new Date(effectiveQuery.toAtMs).toISOString() : null
-          },
-          executions
+          ...payload
         });
+      }
+
+      if (method === "GET" && route === "/spell-executions/events") {
+        let query: ListExecutionsQuery;
+        try {
+          query = parseListExecutionsQuery(url.searchParams);
+        } catch (error) {
+          return sendJson(res, 400, {
+            ok: false,
+            error_code: "INVALID_QUERY",
+            message: (error as Error).message
+          });
+        }
+
+        const scoped = scopeListExecutionsQuery(query, authContext, authKeys.length > 0);
+        if (!scoped.ok) {
+          return sendJson(res, 403, {
+            ok: false,
+            error_code: scoped.errorCode,
+            message: scoped.message
+          });
+        }
+
+        res.statusCode = 200;
+        res.setHeader("content-type", "text/event-stream; charset=utf-8");
+        res.setHeader("cache-control", "no-cache, no-transform");
+        res.setHeader("connection", "keep-alive");
+        res.setHeader("x-accel-buffering", "no");
+        res.flushHeaders?.();
+
+        let closed = false;
+        let lastPayload = "";
+        let pollTimer: NodeJS.Timeout | undefined;
+        let heartbeatTimer: NodeJS.Timeout | undefined;
+
+        const closeStream = (): void => {
+          if (closed) {
+            return;
+          }
+          closed = true;
+          if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = undefined;
+          }
+          if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = undefined;
+          }
+          if (!res.writableEnded) {
+            res.end();
+          }
+        };
+
+        const writeEvent = (eventName: string, payload: Record<string, unknown>): void => {
+          if (closed || res.writableEnded) {
+            return;
+          }
+          res.write(`event: ${eventName}\n`);
+          res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        };
+
+        const emitIfChanged = (eventName: string): void => {
+          const payload = buildExecutionListPayload(jobs, scoped.query);
+          const serialized = JSON.stringify(payload);
+          if (serialized === lastPayload) {
+            return;
+          }
+          writeEvent(eventName, payload);
+          lastPayload = serialized;
+        };
+
+        req.once("close", closeStream);
+        req.once("aborted", closeStream);
+
+        emitIfChanged("snapshot");
+
+        pollTimer = setInterval(() => {
+          if (closed) {
+            return;
+          }
+          emitIfChanged("executions");
+        }, STREAM_POLL_INTERVAL_MS);
+
+        heartbeatTimer = setInterval(() => {
+          if (closed || res.writableEnded) {
+            return;
+          }
+          res.write(": ping\n\n");
+        }, STREAM_HEARTBEAT_MS);
+
+        return;
       }
 
       if (method === "GET" && route.startsWith("/tenants/") && route.endsWith("/usage")) {
@@ -781,7 +857,7 @@ export async function startExecutionApiServer(
         }
       }
 
-      if (method === "GET" && route.startsWith("/spell-executions/") && route.endsWith("/events")) {
+      if (method === "GET" && /^\/spell-executions\/[^/]+\/events$/.test(route)) {
         const matched = /^\/spell-executions\/([^/]+)\/events$/.exec(route);
         const executionId = matched && matched[1] ? matched[1].trim() : "";
         if (!executionId || !/^[a-zA-Z0-9_.-]+$/.test(executionId)) {
@@ -1702,6 +1778,41 @@ function matchJobByQuery(job: ExecutionJob, query: ListExecutionsQuery): boolean
   }
 
   return true;
+}
+
+function buildExecutionListPayload(
+  jobs: Map<string, ExecutionJob>,
+  query: ListExecutionsQuery
+): {
+  filters: {
+    status: JobStatus[];
+    button_id: string | null;
+    spell_id: string | null;
+    tenant_id: string | null;
+    limit: number;
+    from: string | null;
+    to: string | null;
+  };
+  executions: Record<string, unknown>[];
+} {
+  const executions = Array.from(jobs.values())
+    .filter((job) => matchJobByQuery(job, query))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, query.limit)
+    .map((job) => summarizeJob(job));
+
+  return {
+    filters: {
+      status: query.statuses ? Array.from(query.statuses) : [],
+      button_id: query.buttonId ?? null,
+      spell_id: query.spellId ?? null,
+      tenant_id: query.tenantId ?? null,
+      limit: query.limit,
+      from: query.fromAtMs !== null ? new Date(query.fromAtMs).toISOString() : null,
+      to: query.toAtMs !== null ? new Date(query.toAtMs).toISOString() : null
+    },
+    executions
+  };
 }
 
 function parseTimeFilter(raw: string | null, label: string): number | null {

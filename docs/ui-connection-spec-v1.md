@@ -61,6 +61,7 @@ See sample:
 ## 6.0 Discovery and UI endpoints
 - `GET /api/buttons`
 - `GET /api/spell-executions` (query: `status`, `button_id`, `spell_id`, `tenant_id`, `limit`, `from`, `to`)
+- `GET /api/spell-executions/events` (SSE list stream with same query filters)
 - `GET /api/spell-executions/:execution_id`
 - `GET /api/spell-executions/:execution_id/events` (SSE stream: `snapshot`/`execution`/`terminal`)
 - `GET /api/spell-executions/:execution_id/output?path=step.<name>.(stdout|json[.dot.path])`
@@ -142,6 +143,17 @@ Execution status values:
 - `failed`
 - `timeout`
 - `canceled`
+
+## 6.2.0 GET /api/spell-executions/events
+Streams execution list updates as server-sent events using the same filters as `GET /api/spell-executions`.
+
+Event sequence:
+- `snapshot`: initial list payload
+- `executions`: changed list payloads
+
+Tenant/auth behavior:
+- follows same auth and tenant scoping policy as list API
+- with auth keys, non-admin cross-tenant filters return `403 TENANT_FORBIDDEN`
 
 ## 6.2.1 GET /api/spell-executions/:execution_id/events
 Streams execution updates as server-sent events.

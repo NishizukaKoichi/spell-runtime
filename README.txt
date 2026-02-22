@@ -491,6 +491,7 @@ Defaults:
   GET /ui/app.js
   GET /api/buttons (includes allowed_tenants for each button; null when unrestricted)
   GET /api/spell-executions (status/button_id/spell_id/tenant_id/limit/from/to query supported)
+  GET /api/spell-executions/events (SSE list stream with same filters as list API)
   POST /api/spell-executions (supports optional Idempotency-Key header)
   GET /api/spell-executions/:execution_id
   GET /api/spell-executions/:execution_id/events (SSE stream: snapshot -> execution updates -> terminal)
@@ -526,8 +527,9 @@ Security note:
 - POST /api/spell-executions/:execution_id/cancel marks queued/running jobs as canceled; terminal states (succeeded/failed/timeout/canceled) return 409 ALREADY_TERMINAL
 - POST /api/spell-executions/:execution_id/retry allows retrying only failed/timeout/canceled executions; other states return 409 NOT_RETRYABLE
 - retry creates a new execution_id and links executions via retry_of (new execution) and retried_by (source execution); list/detail payloads include both fields
+- GET /api/spell-executions/events streams filtered execution list snapshots (snapshot + executions)
 - GET /api/spell-executions/:execution_id/events streams server-sent events and closes after terminal status (succeeded/failed/timeout/canceled)
-- Receipts UI uses this SSE route to live-update selected execution detail while status is queued/running
+- Receipts UI uses list SSE for execution list and detail SSE for selected execution while status is queued/running
 - when auth is enabled, pass Authorization: Bearer <token> (or x-api-key) for /api routes
 - with SPELL_API_AUTH_KEYS, non-admin list requests are restricted to their own tenant and cross-tenant tenant_id filters return 403 (TENANT_FORBIDDEN)
 - with SPELL_API_AUTH_KEYS, non-admin cancel requests are restricted to their own tenant (403 TENANT_FORBIDDEN for cross-tenant)
