@@ -242,6 +242,9 @@ Policy file format (`~/.spell/policy.json`):
   },
   "signature": {
     "require_verified": false
+  },
+  "rollback": {
+    "require_full_compensation": false
   }
 }
 ```
@@ -256,6 +259,7 @@ Notes:
 - `effects.allow_types` denies any spell effect type not listed
 - `effects.deny_types` denies listed effect types and takes precedence over `effects.allow_types`
 - `signature.require_verified=true` denies non-verified signature states (`unsigned`, `untrusted`, `invalid`) even when `--allow-unsigned` is passed
+- `rollback.require_full_compensation=true` marks incomplete compensation as `manual recovery required` and records it in execution logs/receipts
 
 Policy management commands:
 - `spell policy show` prints the current policy JSON; if missing, it prints a clear message and exits successfully.
@@ -338,6 +342,7 @@ Notes:
 - skipped steps do not emit `outputs[step.<name>.*]`
 - on step failure, configured rollback steps run in reverse execution order (`rollback.<stepName>`)
 - rollback failures are recorded, then the original step failure is returned
+- runtime log includes `rollback.state` (`not_needed`, `fully_compensated`, `partially_compensated`, `not_compensated`)
 
 ## Windows Policy
 

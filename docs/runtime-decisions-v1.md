@@ -164,3 +164,11 @@ v1 intentionally excludes:
 - if a cast fails after one or more steps executed, rollback runs best-effort in reverse execution order for steps that define rollback.
 - rollback step names are recorded as `rollback.<originalStepName>` in step results.
 - rollback failures are also recorded in step results; runtime still returns the original execution failure.
+
+## 23. Compensation strictness signal
+- rollback outcomes are summarized in execution logs under `rollback`:
+  - attempted/succeeded/failed counts
+  - steps executed without rollback handlers
+  - final state (`not_needed`, `fully_compensated`, `partially_compensated`, `not_compensated`)
+- runtime policy supports `rollback.require_full_compensation`.
+- when enabled and rollback state is not fully compensated, cast reports `manual recovery required` and API maps it to `COMPENSATION_INCOMPLETE`.

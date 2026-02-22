@@ -1,5 +1,5 @@
 import path from "node:path";
-import { CheckResult, SpellBundleManifest, SpellStep, StepResult } from "../types";
+import { CheckResult, RollbackSummary, SpellBundleManifest, SpellStep, StepResult } from "../types";
 import { runHttpStep, HttpStepExecution } from "../steps/httpStep";
 import { runShellStep, ShellStepExecution } from "../steps/shellStep";
 import { SpellError } from "../util/errors";
@@ -41,12 +41,20 @@ export class StepExecutionError extends SpellError {
   readonly outputs: Record<string, unknown>;
   readonly stepResults: StepResult[];
   readonly checks: CheckResult[];
+  readonly rollback?: RollbackSummary;
 
-  constructor(message: string, outputs: Record<string, unknown>, stepResults: StepResult[], checks: CheckResult[] = []) {
+  constructor(
+    message: string,
+    outputs: Record<string, unknown>,
+    stepResults: StepResult[],
+    checks: CheckResult[] = [],
+    rollback?: RollbackSummary
+  ) {
     super(message);
     this.outputs = outputs;
     this.stepResults = stepResults;
     this.checks = checks;
+    this.rollback = rollback;
   }
 }
 
@@ -117,7 +125,7 @@ export async function executeSteps(
       }
     }
   } catch (error) {
-    const rollbackResults = await runConfiguredRollbacks(
+    const rollbackRun = await runConfiguredRollbacks(
       manifest,
       bundlePath,
       env,
@@ -126,9 +134,9 @@ export async function executeSteps(
       options.executionTimeoutMs,
       shellRunner
     );
-    stepResults.push(...rollbackResults);
+    stepResults.push(...rollbackRun.stepResults);
     const message = error instanceof Error ? error.message : String(error);
-    throw new StepExecutionError(message, { ...outputs }, [...stepResults]);
+    throw new StepExecutionError(message, { ...outputs }, [...stepResults], [], rollbackRun.summary);
   }
 
   return { outputs, stepResults, executedStepNames };
@@ -272,9 +280,14 @@ export async function runConfiguredRollbacks(
   executionDeadlineMs: number | undefined,
   executionTimeoutMs: number | undefined,
   shellRunner: ShellRunner = runShellStep
-): Promise<StepResult[]> {
+): Promise<{ stepResults: StepResult[]; summary: RollbackSummary }> {
   const rollbackResults: StepResult[] = [];
   const stepMap = new Map(manifest.steps.map((step) => [step.name, step]));
+  const failedRollbackSteps: string[] = [];
+  let rollbackPlannedSteps = 0;
+  let rollbackAttemptedSteps = 0;
+  let rollbackSucceededSteps = 0;
+  let rollbackFailedSteps = 0;
 
   for (let i = executedStepNames.length - 1; i >= 0; i -= 1) {
     const stepName = executedStepNames[i];
@@ -282,6 +295,7 @@ export async function runConfiguredRollbacks(
     if (!sourceStep || !sourceStep.rollback) {
       continue;
     }
+    rollbackPlannedSteps += 1;
 
     const rollbackStep: SpellStep = {
       uses: "shell",
@@ -291,8 +305,11 @@ export async function runConfiguredRollbacks(
     const rollbackPath = path.resolve(bundlePath, rollbackStep.run);
     const remainingExecutionMs = executionDeadlineMs !== undefined ? executionDeadlineMs - Date.now() : undefined;
     const startedAt = new Date().toISOString();
+    rollbackAttemptedSteps += 1;
 
     if (remainingExecutionMs !== undefined && remainingExecutionMs <= 0) {
+      rollbackFailedSteps += 1;
+      failedRollbackSteps.push(rollbackStep.name);
       rollbackResults.push({
         stepName: rollbackStep.name,
         uses: rollbackStep.uses,
@@ -309,11 +326,14 @@ export async function runConfiguredRollbacks(
         maxDurationMs: remainingExecutionMs,
         executionTimeoutMs
       });
+      rollbackSucceededSteps += 1;
       rollbackResults.push({
         ...result.stepResult,
         stepName: rollbackStep.name
       });
     } catch (error) {
+      rollbackFailedSteps += 1;
+      failedRollbackSteps.push(rollbackStep.name);
       const finishedAt = new Date().toISOString();
       rollbackResults.push({
         stepName: rollbackStep.name,
@@ -326,5 +346,68 @@ export async function runConfiguredRollbacks(
     }
   }
 
-  return rollbackResults;
+  const totalExecutedSteps = executedStepNames.length;
+  const rollbackSkippedWithoutHandlerSteps = Math.max(0, totalExecutedSteps - rollbackPlannedSteps);
+  const summary = buildRollbackSummary({
+    totalExecutedSteps,
+    rollbackPlannedSteps,
+    rollbackAttemptedSteps,
+    rollbackSucceededSteps,
+    rollbackFailedSteps,
+    rollbackSkippedWithoutHandlerSteps,
+    failedRollbackSteps
+  });
+
+  return {
+    stepResults: rollbackResults,
+    summary
+  };
+}
+
+function buildRollbackSummary(params: {
+  totalExecutedSteps: number;
+  rollbackPlannedSteps: number;
+  rollbackAttemptedSteps: number;
+  rollbackSucceededSteps: number;
+  rollbackFailedSteps: number;
+  rollbackSkippedWithoutHandlerSteps: number;
+  failedRollbackSteps: string[];
+}): RollbackSummary {
+  const {
+    totalExecutedSteps,
+    rollbackPlannedSteps,
+    rollbackAttemptedSteps,
+    rollbackSucceededSteps,
+    rollbackFailedSteps,
+    rollbackSkippedWithoutHandlerSteps,
+    failedRollbackSteps
+  } = params;
+
+  let state: RollbackSummary["state"] = "not_needed";
+  if (totalExecutedSteps > 0) {
+    const fullyCompensated =
+      rollbackPlannedSteps > 0 &&
+      rollbackAttemptedSteps === rollbackPlannedSteps &&
+      rollbackFailedSteps === 0 &&
+      rollbackSkippedWithoutHandlerSteps === 0;
+
+    if (fullyCompensated) {
+      state = "fully_compensated";
+    } else if (rollbackSucceededSteps > 0) {
+      state = "partially_compensated";
+    } else {
+      state = "not_compensated";
+    }
+  }
+
+  return {
+    total_executed_steps: totalExecutedSteps,
+    rollback_planned_steps: rollbackPlannedSteps,
+    rollback_attempted_steps: rollbackAttemptedSteps,
+    rollback_succeeded_steps: rollbackSucceededSteps,
+    rollback_failed_steps: rollbackFailedSteps,
+    rollback_skipped_without_handler_steps: rollbackSkippedWithoutHandlerSteps,
+    failed_step_names: failedRollbackSteps,
+    state
+  };
 }

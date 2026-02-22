@@ -111,6 +111,15 @@ describe("executeSteps", () => {
     expect(called).toEqual(["prepare", "deploy", "rollback.prepare"]);
     expect(executionError.outputs["step.prepare.stdout"]).toBe("PREPARE");
     expect(executionError.stepResults.map((entry) => entry.stepName)).toEqual(["prepare", "rollback.prepare"]);
+    expect(executionError.rollback).toMatchObject({
+      total_executed_steps: 1,
+      rollback_planned_steps: 1,
+      rollback_attempted_steps: 1,
+      rollback_succeeded_steps: 1,
+      rollback_failed_steps: 0,
+      rollback_skipped_without_handler_steps: 0,
+      state: "fully_compensated"
+    });
   });
 
   test("records rollback failures and keeps running remaining rollbacks", async () => {
@@ -152,6 +161,16 @@ describe("executeSteps", () => {
     expect(rollbackB?.message).toContain("rollback failed");
     const rollbackA = executionError.stepResults.find((entry) => entry.stepName === "rollback.a");
     expect(rollbackA?.success).toBe(true);
+    expect(executionError.rollback).toMatchObject({
+      total_executed_steps: 2,
+      rollback_planned_steps: 2,
+      rollback_attempted_steps: 2,
+      rollback_succeeded_steps: 1,
+      rollback_failed_steps: 1,
+      rollback_skipped_without_handler_steps: 0,
+      state: "partially_compensated"
+    });
+    expect(executionError.rollback?.failed_step_names).toEqual(["rollback.b"]);
   });
 });
 

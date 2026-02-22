@@ -1135,6 +1135,70 @@ describe("spell cli integration", () => {
     expect(result.stderr).toContain("policy denied: signature status 'unsigned' is not allowed (verified required)");
   });
 
+  test("policy rollback.require_full_compensation marks incomplete compensation as manual recovery required", async () => {
+    const bundleDir = await createHostShellBundle("tests/rollback-strict", [
+      {
+        name: "prepare",
+        fileName: "prepare.js",
+        source: ["#!/usr/bin/env node", "console.log('prepared');"].join("\n"),
+        rollbackFileName: "rollback-prepare.js",
+        rollbackSource: ["#!/usr/bin/env node", "process.stderr.write('rollback failed\\n');", "process.exit(1);"].join("\n")
+      },
+      {
+        name: "deploy",
+        fileName: "deploy.js",
+        source: ["#!/usr/bin/env node", "process.stderr.write('deploy failed\\n');", "process.exit(1);"].join("\n"),
+        dependsOn: ["prepare"]
+      }
+    ]);
+
+    try {
+      expect(await runCli(["node", "spell", "install", bundleDir])).toBe(0);
+
+      const spellDir = path.join(tempHome, ".spell");
+      await mkdir(spellDir, { recursive: true });
+      await writeFile(
+        path.join(spellDir, "policy.json"),
+        `${JSON.stringify(
+          {
+            version: "v1",
+            default: "allow",
+            rollback: {
+              require_full_compensation: true
+            }
+          },
+          null,
+          2
+        )}\n`,
+        "utf8"
+      );
+
+      const result = await runCliCapture([
+        "node",
+        "spell",
+        "cast",
+        "tests/rollback-strict",
+        "--allow-unsigned",
+        "-p",
+        "name=demo"
+      ]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("manual recovery required: compensation state=not_compensated");
+
+      const logsDir = path.join(tempHome, ".spell", "logs");
+      const logs = (await readdir(logsDir)).sort();
+      const lastLog = logs[logs.length - 1];
+      const payload = JSON.parse(await readFile(path.join(logsDir, lastLog), "utf8")) as Record<string, unknown>;
+      const rollback = payload.rollback as Record<string, unknown>;
+      expect(rollback.require_full_compensation).toBe(true);
+      expect(rollback.manual_recovery_required).toBe(true);
+      expect(rollback.state).toBe("not_compensated");
+    } finally {
+      await rm(bundleDir, { recursive: true, force: true });
+    }
+  });
+
   test("permissions guard blocks without connector token", async () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/permissions-guard");
     expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
@@ -2007,7 +2071,14 @@ function isDockerDaemonAvailable(): boolean {
 
 async function createHostShellBundle(
   spellId: string,
-  steps: Array<{ name: string; fileName: string; source: string }>
+  steps: Array<{
+    name: string;
+    fileName: string;
+    source: string;
+    dependsOn?: string[];
+    rollbackFileName?: string;
+    rollbackSource?: string;
+  }>
 ): Promise<string> {
   const bundleDir = await mkdtemp(path.join(tmpdir(), "spell-timeout-bundle-"));
   const stepsDir = path.join(bundleDir, "steps");
@@ -2017,6 +2088,12 @@ async function createHostShellBundle(
     const stepPath = path.join(stepsDir, step.fileName);
     await writeFile(stepPath, step.source, "utf8");
     await chmod(stepPath, 0o755);
+
+    if (step.rollbackFileName) {
+      const rollbackPath = path.join(stepsDir, step.rollbackFileName);
+      await writeFile(rollbackPath, step.rollbackSource ?? "#!/usr/bin/env node\nprocess.exit(0);\n", "utf8");
+      await chmod(rollbackPath, 0o755);
+    }
   }
 
   await writeFile(
@@ -2063,6 +2140,15 @@ async function createHostShellBundle(
     manifestLines.push("  - uses: shell");
     manifestLines.push(`    name: ${step.name}`);
     manifestLines.push(`    run: steps/${step.fileName}`);
+    if (step.dependsOn && step.dependsOn.length > 0) {
+      manifestLines.push("    depends_on:");
+      for (const dep of step.dependsOn) {
+        manifestLines.push(`      - ${dep}`);
+      }
+    }
+    if (step.rollbackFileName) {
+      manifestLines.push(`    rollback: steps/${step.rollbackFileName}`);
+    }
   }
 
   manifestLines.push("checks:");

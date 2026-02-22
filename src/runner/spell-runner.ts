@@ -5,7 +5,7 @@ import path from "node:path";
 import { loadManifestFromDir } from "../bundle/manifest";
 import { readSchemaFromManifest } from "../bundle/store";
 import { evaluateChecks } from "../checks/evaluate";
-import { CheckResult, StepResult } from "../types";
+import { CheckResult, RollbackSummary, StepResult } from "../types";
 import { SpellError } from "../util/errors";
 import { detectHostPlatform, platformMatches } from "../util/platform";
 import { validateInputAgainstSchema } from "./input";
@@ -17,6 +17,7 @@ interface RunnerResult {
   stepResults: StepResult[];
   outputs: Record<string, unknown>;
   checks: CheckResult[];
+  rollback?: RollbackSummary;
 }
 
 async function main(): Promise<void> {
@@ -48,6 +49,7 @@ export async function runSpellRunner(manifestPath: string, inputPath: string): P
   const stepResults: StepResult[] = [];
   const outputs: Record<string, unknown> = {};
   let checks: CheckResult[] = [];
+  let rollback: RollbackSummary | undefined;
 
   try {
     await copyBundleForExecution(sourceDir, workDir);
@@ -92,6 +94,7 @@ export async function runSpellRunner(manifestPath: string, inputPath: string): P
       stepResults.push(...error.stepResults);
       Object.assign(outputs, error.outputs);
       checks = error.checks;
+      rollback = error.rollback;
     }
 
     return {
@@ -99,7 +102,8 @@ export async function runSpellRunner(manifestPath: string, inputPath: string): P
       error: (error as Error).message,
       stepResults,
       outputs,
-      checks
+      checks,
+      rollback
     };
   } finally {
     await rm(workDir, { recursive: true, force: true }).catch(() => undefined);

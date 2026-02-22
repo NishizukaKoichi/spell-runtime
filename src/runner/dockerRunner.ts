@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { SpellBundleManifest, CheckResult, StepResult } from "../types";
+import { SpellBundleManifest, CheckResult, RollbackSummary, StepResult } from "../types";
 import { SpellError } from "../util/errors";
 import { formatExecutionTimeoutMessage } from "./runtimeLimits";
 
@@ -27,18 +27,27 @@ export interface DockerRunnerResult {
   stepResults: StepResult[];
   outputs: Record<string, unknown>;
   checks: CheckResult[];
+  rollback?: RollbackSummary;
 }
 
 export class DockerExecutionError extends SpellError {
   readonly stepResults: StepResult[];
   readonly outputs: Record<string, unknown>;
   readonly checks: CheckResult[];
+  readonly rollback?: RollbackSummary;
 
-  constructor(message: string, stepResults: StepResult[], outputs: Record<string, unknown>, checks: CheckResult[]) {
+  constructor(
+    message: string,
+    stepResults: StepResult[],
+    outputs: Record<string, unknown>,
+    checks: CheckResult[],
+    rollback?: RollbackSummary
+  ) {
     super(message);
     this.stepResults = stepResults;
     this.outputs = outputs;
     this.checks = checks;
+    this.rollback = rollback;
   }
 }
 
@@ -79,7 +88,7 @@ export async function runDocker(
     if (parsed) {
       if (!parsed.success) {
         const message = parsed.error ?? (stderr.trim() || `docker exited with code ${code}`);
-        throw new DockerExecutionError(message, parsed.stepResults, parsed.outputs, parsed.checks);
+        throw new DockerExecutionError(message, parsed.stepResults, parsed.outputs, parsed.checks, parsed.rollback);
       }
       return parsed;
     }
@@ -312,7 +321,11 @@ function parseRunnerJson(stdout: string): DockerRunnerResult {
     error: typeof obj.error === "string" ? obj.error : undefined,
     stepResults: Array.isArray(obj.stepResults) ? (obj.stepResults as StepResult[]) : [],
     outputs: obj.outputs && typeof obj.outputs === "object" && !Array.isArray(obj.outputs) ? (obj.outputs as Record<string, unknown>) : {},
-    checks: Array.isArray(obj.checks) ? (obj.checks as CheckResult[]) : []
+    checks: Array.isArray(obj.checks) ? (obj.checks as CheckResult[]) : [],
+    rollback:
+      obj.rollback && typeof obj.rollback === "object" && !Array.isArray(obj.rollback)
+        ? (obj.rollback as RollbackSummary)
+        : undefined
   };
 }
 

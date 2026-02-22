@@ -89,6 +89,21 @@ export interface CheckResult {
   message: string;
 }
 
+export type RollbackState = "not_needed" | "fully_compensated" | "partially_compensated" | "not_compensated";
+
+export interface RollbackSummary {
+  total_executed_steps: number;
+  rollback_planned_steps: number;
+  rollback_attempted_steps: number;
+  rollback_succeeded_steps: number;
+  rollback_failed_steps: number;
+  rollback_skipped_without_handler_steps: number;
+  failed_step_names: string[];
+  state: RollbackState;
+  require_full_compensation?: boolean;
+  manual_recovery_required?: boolean;
+}
+
 export interface CastContext {
   input: Record<string, unknown>;
   outputs: Record<string, unknown>;
@@ -123,6 +138,7 @@ export interface ExecutionLog {
   steps: StepResult[];
   outputs: Record<string, unknown>;
   checks: CheckResult[];
+  rollback?: RollbackSummary;
   success: boolean;
   error?: string;
 }

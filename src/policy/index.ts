@@ -39,6 +39,9 @@ export interface RuntimePolicyV1 {
   signature?: {
     require_verified?: boolean;
   };
+  rollback?: {
+    require_full_compensation?: boolean;
+  };
 }
 
 export interface RuntimePolicyContext {
@@ -81,7 +84,11 @@ export function parseRuntimePolicy(raw: unknown): RuntimePolicyV1 {
   }
 
   const obj = raw as Record<string, unknown>;
-  assertOnlyKeys(obj, ["version", "default", "spells", "publishers", "max_risk", "runtime", "effects", "signature"], "policy");
+  assertOnlyKeys(
+    obj,
+    ["version", "default", "spells", "publishers", "max_risk", "runtime", "effects", "signature", "rollback"],
+    "policy"
+  );
 
   const version = readRequiredString(obj, "version");
   if (version !== POLICY_VERSION) {
@@ -99,6 +106,7 @@ export function parseRuntimePolicy(raw: unknown): RuntimePolicyV1 {
   const runtime = parseRuntime(obj.runtime);
   const effects = parseEffects(obj.effects);
   const signature = parseSignature(obj.signature);
+  const rollback = parseRollback(obj.rollback);
 
   return {
     version: "v1",
@@ -108,7 +116,8 @@ export function parseRuntimePolicy(raw: unknown): RuntimePolicyV1 {
     max_risk: maxRisk,
     runtime,
     effects,
-    signature
+    signature,
+    rollback
   };
 }
 
@@ -304,6 +313,22 @@ function parseSignature(raw: unknown): RuntimePolicyV1["signature"] | undefined 
 
   return {
     require_verified: parseBoolean(obj.require_verified, "signature.require_verified")
+  };
+}
+
+function parseRollback(raw: unknown): RuntimePolicyV1["rollback"] | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw invalidPolicy("rollback must be an object");
+  }
+
+  const obj = raw as Record<string, unknown>;
+  assertOnlyKeys(obj, ["require_full_compensation"], "rollback");
+
+  return {
+    require_full_compensation: parseBoolean(obj.require_full_compensation, "rollback.require_full_compensation")
   };
 }
 

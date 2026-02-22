@@ -34,6 +34,9 @@ describe("parseRuntimePolicy", () => {
       },
       signature: {
         require_verified: true
+      },
+      rollback: {
+        require_full_compensation: true
       }
     });
 
@@ -59,6 +62,9 @@ describe("parseRuntimePolicy", () => {
       },
       signature: {
         require_verified: true
+      },
+      rollback: {
+        require_full_compensation: true
       }
     });
   });
@@ -75,6 +81,16 @@ describe("parseRuntimePolicy", () => {
         unexpected: true
       })
     ).toThrow("invalid policy: policy contains unknown key 'unexpected'");
+  });
+
+  test("rejects invalid rollback policy shape", () => {
+    expect(() =>
+      parseRuntimePolicy({
+        version: "v1",
+        default: "allow",
+        rollback: "strict"
+      })
+    ).toThrow("invalid policy: rollback must be an object");
   });
 });
 

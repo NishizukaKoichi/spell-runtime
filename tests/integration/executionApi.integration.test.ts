@@ -1302,6 +1302,93 @@ describe("execution api integration", () => {
     }
   });
 
+  test("marks failed compensation as COMPENSATION_INCOMPLETE when rollback policy requires full compensation", async () => {
+    const bundleDir = await createHostShellBundle("tests/api-rollback-strict", [
+      {
+        name: "prepare",
+        fileName: "prepare.js",
+        source: ["#!/usr/bin/env node", "console.log('prepared');"].join("\n"),
+        rollbackFileName: "rollback-prepare.js",
+        rollbackSource: ["#!/usr/bin/env node", "process.stderr.write('rollback failed\\n');", "process.exit(1);"].join("\n")
+      },
+      {
+        name: "deploy",
+        fileName: "deploy.js",
+        source: ["#!/usr/bin/env node", "process.stderr.write('deploy failed\\n');", "process.exit(1);"].join("\n"),
+        dependsOn: ["prepare"]
+      }
+    ]);
+    const tempRegistryDir = await mkdtemp(path.join(tmpdir(), "spell-api-rollback-registry-"));
+    const registryPath = path.join(tempRegistryDir, "button-registry.v1.json");
+
+    try {
+      expect(await runCli(["node", "spell", "install", bundleDir])).toBe(0);
+
+      const baseRegistryRaw = await readFile(path.join(process.cwd(), "examples/button-registry.v1.json"), "utf8");
+      const baseRegistry = JSON.parse(baseRegistryRaw) as {
+        version: "v1";
+        buttons: Array<Record<string, unknown>>;
+      };
+      const extendedRegistry = {
+        version: baseRegistry.version,
+        buttons: [
+          ...baseRegistry.buttons,
+          {
+            button_id: "rollback_strict_test",
+            label: "Rollback Strict Test",
+            description: "compensation strictness test",
+            spell_id: "tests/api-rollback-strict",
+            version: "1.0.0",
+            defaults: {
+              name: "demo"
+            },
+            required_confirmations: {
+              risk: false,
+              billing: false
+            },
+            require_signature: false,
+            allowed_roles: ["admin"]
+          }
+        ]
+      };
+      await writeFile(registryPath, `${JSON.stringify(extendedRegistry, null, 2)}\n`, "utf8");
+
+      const spellDir = path.join(tempHome, ".spell");
+      await mkdir(spellDir, { recursive: true });
+      await writeFile(
+        path.join(spellDir, "policy.json"),
+        `${JSON.stringify({ version: "v1", default: "allow", rollback: { require_full_compensation: true } }, null, 2)}\n`,
+        "utf8"
+      );
+
+      const server = await startExecutionApiServer({
+        port: 0,
+        registryPath
+      });
+
+      try {
+        const executionId = await createExecution(server.port, {
+          button_id: "rollback_strict_test",
+          actor_role: "admin"
+        });
+        const done = await waitForExecution(server.port, executionId);
+        expect(done.execution.status).toBe("failed");
+        expect(done.execution.error_code).toBe("COMPENSATION_INCOMPLETE");
+
+        const receipt = done.receipt as Record<string, unknown>;
+        const rollback = receipt.rollback as Record<string, unknown>;
+        expect(rollback.manual_recovery_required).toBe(true);
+        expect(rollback.require_full_compensation).toBe(true);
+        expect(rollback.state).toBe("not_compensated");
+      } finally {
+        await server.close();
+      }
+    } finally {
+      await rm(bundleDir, { recursive: true, force: true });
+      await rm(tempRegistryDir, { recursive: true, force: true });
+    }
+  });
+
   test("rejects request with direct spell_id field (button_id only contract)", async () => {
     const server = await startExecutionApiServer({
       port: 0,
@@ -1654,7 +1741,14 @@ async function createExecution(
 
 async function createHostShellBundle(
   spellId: string,
-  steps: Array<{ name: string; fileName: string; source: string }>
+  steps: Array<{
+    name: string;
+    fileName: string;
+    source: string;
+    dependsOn?: string[];
+    rollbackFileName?: string;
+    rollbackSource?: string;
+  }>
 ): Promise<string> {
   const bundleDir = await mkdtemp(path.join(tmpdir(), "spell-cancel-bundle-"));
   const stepsDir = path.join(bundleDir, "steps");
@@ -1664,6 +1758,12 @@ async function createHostShellBundle(
     const stepPath = path.join(stepsDir, step.fileName);
     await writeFile(stepPath, step.source, "utf8");
     await chmod(stepPath, 0o755);
+
+    if (step.rollbackFileName) {
+      const rollbackPath = path.join(stepsDir, step.rollbackFileName);
+      await writeFile(rollbackPath, step.rollbackSource ?? "#!/usr/bin/env node\nprocess.exit(0);\n", "utf8");
+      await chmod(rollbackPath, 0o755);
+    }
   }
 
   await writeFile(
@@ -1710,6 +1810,15 @@ async function createHostShellBundle(
     manifestLines.push("  - uses: shell");
     manifestLines.push(`    name: ${step.name}`);
     manifestLines.push(`    run: steps/${step.fileName}`);
+    if (step.dependsOn && step.dependsOn.length > 0) {
+      manifestLines.push("    depends_on:");
+      for (const dep of step.dependsOn) {
+        manifestLines.push(`      - ${dep}`);
+      }
+    }
+    if (step.rollbackFileName) {
+      manifestLines.push(`    rollback: steps/${step.rollbackFileName}`);
+    }
   }
 
   manifestLines.push("checks:");

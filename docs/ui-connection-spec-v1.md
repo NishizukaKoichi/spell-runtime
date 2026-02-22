@@ -238,6 +238,7 @@ Map common stderr messages from runtime to stable API error codes:
 - `spell not installed: ...` -> `SPELL_NOT_INSTALLED`
 - `version not installed ...` -> `SPELL_VERSION_NOT_INSTALLED`
 - `input does not match schema ...` -> `INPUT_SCHEMA_INVALID`
+- `manual recovery required: compensation state=...` -> `COMPENSATION_INCOMPLETE`
 
 ## 10. UI/UX Minimum
 - Button click opens confirmation dialog when guard flags apply.

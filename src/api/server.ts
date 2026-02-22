@@ -919,8 +919,17 @@ async function runJob(
     clearTimeout(timer);
     runtimeState.child = null;
 
-    const runtimeExecutionId = findLineValue(stdout, "execution_id:");
-    const runtimeLogPath = findLineValue(stdout, "log:");
+    let runtimeExecutionId = findLineValue(stdout, "execution_id:");
+    let runtimeLogPath = findLineValue(stdout, "log:");
+    if (!runtimeLogPath) {
+      const inferred = await inferRuntimeLogFromDisk(retention.logsDirectory, job, running.started_at ?? job.created_at);
+      if (inferred) {
+        runtimeLogPath = inferred.path;
+        if (!runtimeExecutionId && inferred.executionId) {
+          runtimeExecutionId = inferred.executionId;
+        }
+      }
+    }
 
     let receipt: Record<string, unknown> | undefined;
     if (runtimeLogPath) {
@@ -973,12 +982,19 @@ async function runJob(
     }
 
     const mapped = mapRuntimeError(stderr || stdout);
-    const status: JobStatus = mapped.code === "EXECUTION_TIMEOUT" ? "timeout" : "failed";
+    const rollbackAssessment = assessRollbackFromReceipt(receipt);
+    const effectiveMapped = rollbackAssessment.manualRecoveryRequired
+      ? {
+          code: "COMPENSATION_INCOMPLETE",
+          message: `manual recovery required: compensation state=${rollbackAssessment.state ?? "unknown"}`
+        }
+      : mapped;
+    const status: JobStatus = effectiveMapped.code === "EXECUTION_TIMEOUT" ? "timeout" : "failed";
     const failed: ExecutionJob = {
       ...finishedBase,
       status,
-      error_code: mapped.code,
-      message: mapped.message
+      error_code: effectiveMapped.code,
+      message: effectiveMapped.message
     };
     jobs.set(job.execution_id, failed);
     await persistJobs();
@@ -1040,6 +1056,7 @@ async function loadSanitizedReceipt(runtimeLogPath: string): Promise<Record<stri
     summary: parsed.summary,
     checks: parsed.checks,
     steps,
+    rollback: sanitizeRollbackSummary(parsed.rollback),
     success: parsed.success,
     error: parsed.error
   };
@@ -1078,6 +1095,14 @@ async function readOutputValueFromRuntimeLog(runtimeLogPath: string, outputRef: 
 }
 
 function mapRuntimeError(raw: string): { code: string; message: string } {
+  const compensation = /manual recovery required: compensation state=([a-z_]+)/.exec(raw);
+  if (compensation) {
+    return {
+      code: "COMPENSATION_INCOMPLETE",
+      message: `manual recovery required: compensation state=${compensation[1]}`
+    };
+  }
+
   const executionTimeout = /cast execution timed out after \d+ms(?: while running step '[^']+')?/.exec(raw);
   if (executionTimeout) {
     return { code: "EXECUTION_TIMEOUT", message: executionTimeout[0] };
@@ -1112,6 +1137,43 @@ function mapRuntimeError(raw: string): { code: string; message: string } {
   return { code: "EXECUTION_FAILED", message: "execution failed" };
 }
 
+function sanitizeRollbackSummary(raw: unknown): Record<string, unknown> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+
+  const rollback = raw as Record<string, unknown>;
+  return {
+    total_executed_steps: rollback.total_executed_steps,
+    rollback_planned_steps: rollback.rollback_planned_steps,
+    rollback_attempted_steps: rollback.rollback_attempted_steps,
+    rollback_succeeded_steps: rollback.rollback_succeeded_steps,
+    rollback_failed_steps: rollback.rollback_failed_steps,
+    rollback_skipped_without_handler_steps: rollback.rollback_skipped_without_handler_steps,
+    failed_step_names: rollback.failed_step_names,
+    state: rollback.state,
+    require_full_compensation: rollback.require_full_compensation,
+    manual_recovery_required: rollback.manual_recovery_required
+  };
+}
+
+function assessRollbackFromReceipt(receipt: Record<string, unknown> | undefined): { manualRecoveryRequired: boolean; state?: string } {
+  if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) {
+    return { manualRecoveryRequired: false };
+  }
+
+  const rollback = (receipt as Record<string, unknown>).rollback;
+  if (!rollback || typeof rollback !== "object" || Array.isArray(rollback)) {
+    return { manualRecoveryRequired: false };
+  }
+
+  const rollbackObj = rollback as Record<string, unknown>;
+  return {
+    manualRecoveryRequired: rollbackObj.manual_recovery_required === true,
+    state: typeof rollbackObj.state === "string" ? rollbackObj.state : undefined
+  };
+}
+
 function findLineValue(stdout: string, prefix: string): string | undefined {
   const lines = stdout.split(/\r?\n/);
   for (const line of lines) {
@@ -1120,6 +1182,61 @@ function findLineValue(stdout: string, prefix: string): string | undefined {
     }
   }
   return undefined;
+}
+
+async function inferRuntimeLogFromDisk(
+  logsDirectory: string,
+  job: ExecutionJob,
+  startedAtIso: string
+): Promise<{ path: string; executionId?: string } | null> {
+  const startedAtMs = Date.parse(startedAtIso);
+  const candidates = await readdir(logsDirectory).catch(() => []);
+
+  for (const name of candidates.sort().reverse()) {
+    if (!name.endsWith(".json") || name === "index.json") {
+      continue;
+    }
+
+    const candidatePath = path.join(logsDirectory, name);
+
+    let statInfo: Awaited<ReturnType<typeof stat>> | undefined;
+    try {
+      statInfo = await stat(candidatePath);
+    } catch {
+      continue;
+    }
+    if (!statInfo.isFile()) {
+      continue;
+    }
+
+    if (Number.isFinite(startedAtMs) && statInfo.mtimeMs + 1000 < startedAtMs) {
+      continue;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await readFile(candidatePath, "utf8"));
+    } catch {
+      continue;
+    }
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      continue;
+    }
+
+    const log = parsed as Record<string, unknown>;
+    if (log.id !== job.spell_id || log.version !== job.version) {
+      continue;
+    }
+
+    const executionId = typeof log.execution_id === "string" ? log.execution_id : undefined;
+    return {
+      path: candidatePath,
+      executionId
+    };
+  }
+
+  return null;
 }
 
 function parseIdempotencyKey(

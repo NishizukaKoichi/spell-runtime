@@ -13,7 +13,7 @@ import { enforceSignatureOrThrow, verifyBundleSignature } from "../signature/ver
 import { publisherFromId } from "../signature/trustStore";
 import { findMatchingLicenseForBilling } from "../license/store";
 import { readRuntimeExecutionTimeoutMs, readRuntimeInputMaxBytes } from "./runtimeLimits";
-import { evaluateRuntimePolicy, loadRuntimePolicy } from "../policy";
+import { RuntimePolicyV1, evaluateRuntimePolicy, loadRuntimePolicy } from "../policy";
 import { StepExecutionError } from "./executeSteps";
 
 export interface CastResult {
@@ -25,6 +25,7 @@ export interface CastResult {
 export async function castSpell(options: CastOptions): Promise<CastResult> {
   const logger = pino({ level: options.verbose ? "debug" : "info" });
   const startedAt = new Date().toISOString();
+  let runtimePolicy: RuntimePolicyV1 | null = null;
 
   let executionId = makeExecutionId(options.id, options.version ?? "latest");
 
@@ -77,7 +78,7 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
       }
     };
 
-    const runtimePolicy = await loadRuntimePolicy();
+    runtimePolicy = await loadRuntimePolicy();
 
     log.signature = {
       required: options.requireSignature,
@@ -221,11 +222,22 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
       outputs: runResult.outputs
     };
   } catch (error) {
+    let finalError = error instanceof Error ? error : new SpellError(String(error));
+
     if (error instanceof StepExecutionError) {
       log.steps = error.stepResults;
       log.outputs = error.outputs;
       if (error.checks.length > 0) {
         log.checks = error.checks;
+      }
+      if (error.rollback) {
+        const rollback = applyRollbackPolicy(error.rollback, runtimePolicy);
+        log.rollback = rollback;
+        if (rollback.manual_recovery_required) {
+          finalError = new SpellError(
+            `manual recovery required: compensation state=${rollback.state}; ${finalError.message}`
+          );
+        }
       }
     }
 
@@ -233,11 +245,36 @@ export async function castSpell(options: CastOptions): Promise<CastResult> {
       log.steps = error.stepResults;
       log.outputs = error.outputs;
       log.checks = error.checks;
+      if (error.rollback) {
+        const rollback = applyRollbackPolicy(error.rollback, runtimePolicy);
+        log.rollback = rollback;
+        if (rollback.manual_recovery_required) {
+          finalError = new SpellError(
+            `manual recovery required: compensation state=${rollback.state}; ${finalError.message}`
+          );
+        }
+      }
     }
 
-    log.error = (error as Error).message;
+    log.error = finalError.message;
     log.finished_at = new Date().toISOString();
     await writeExecutionLog(log);
-    throw error;
+    throw finalError;
   }
+}
+
+function requiresFullCompensation(policy: RuntimePolicyV1 | null): boolean {
+  return policy?.rollback?.require_full_compensation === true;
+}
+
+function applyRollbackPolicy(rollback: NonNullable<ExecutionLog["rollback"]>, policy: RuntimePolicyV1 | null): NonNullable<ExecutionLog["rollback"]> {
+  const requireFullCompensation = requiresFullCompensation(policy);
+  const manualRecoveryRequired =
+    requireFullCompensation && rollback.state !== "fully_compensated" && rollback.state !== "not_needed";
+
+  return {
+    ...rollback,
+    require_full_compensation: requireFullCompensation,
+    manual_recovery_required: manualRecoveryRequired
+  };
 }
