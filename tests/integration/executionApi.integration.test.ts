@@ -110,6 +110,8 @@ describe("execution api integration", () => {
       expect(script).toContain("/cancel");
       expect(script).toContain("data-retry-id");
       expect(script).toContain("/retry");
+      expect(script).toContain("/events");
+      expect(script).toContain("startExecutionStream");
       expect(script).toContain("Retry links:");
     } finally {
       await server.close();

@@ -527,6 +527,7 @@ Security note:
 - POST /api/spell-executions/:execution_id/retry allows retrying only failed/timeout/canceled executions; other states return 409 NOT_RETRYABLE
 - retry creates a new execution_id and links executions via retry_of (new execution) and retried_by (source execution); list/detail payloads include both fields
 - GET /api/spell-executions/:execution_id/events streams server-sent events and closes after terminal status (succeeded/failed/timeout/canceled)
+- Receipts UI uses this SSE route to live-update selected execution detail while status is queued/running
 - when auth is enabled, pass Authorization: Bearer <token> (or x-api-key) for /api routes
 - with SPELL_API_AUTH_KEYS, non-admin list requests are restricted to their own tenant and cross-tenant tenant_id filters return 403 (TENANT_FORBIDDEN)
 - with SPELL_API_AUTH_KEYS, non-admin cancel requests are restricted to their own tenant (403 TENANT_FORBIDDEN for cross-tenant)

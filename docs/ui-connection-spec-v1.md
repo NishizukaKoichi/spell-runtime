@@ -23,7 +23,7 @@ A button can safely execute a registered spell with the following behavior:
 2. Backend resolves `button_id` from registry.
 3. Backend constructs and runs `spell cast ...`.
 4. Backend parses `execution_id` and log file path from stdout.
-5. UI shows result and can fetch detailed log via API.
+5. UI shows result and subscribes to execution events for live status updates.
 
 Recommended boundary:
 - UI: intent + confirmation UX
@@ -150,6 +150,11 @@ Event sequence:
 - `snapshot`: immediate current state
 - `execution`: sent when status/receipt changes
 - `terminal`: sent on terminal status, then connection closes
+
+UI usage guideline:
+- open the stream when viewing `queued`/`running` executions
+- update detail panel from streamed payloads
+- stop stream on `terminal` event or when user changes selected execution
 
 Tenant/auth behavior:
 - follows same auth policy as other `/api` routes
