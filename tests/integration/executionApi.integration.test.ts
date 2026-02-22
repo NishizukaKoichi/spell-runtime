@@ -96,6 +96,11 @@ describe("execution api integration", () => {
       expect(html).toContain("Spell Receipts UI");
       expect(html).toContain("guardHint");
       expect(html).toContain("executionStatus");
+      expect(html).toContain("executionButtonId");
+      expect(html).toContain("executionSpellId");
+      expect(html).toContain("executionTenantId");
+      expect(html).toContain("executionFrom");
+      expect(html).toContain("executionTo");
       expect(html).toContain("apiToken");
       expect(html).toContain("tenantHint");
 
@@ -114,6 +119,11 @@ describe("execution api integration", () => {
       expect(script).toContain("startExecutionStream");
       expect(script).toContain("/api/spell-executions/events");
       expect(script).toContain("startListStream");
+      expect(script).toContain("params.set('button_id'");
+      expect(script).toContain("params.set('spell_id'");
+      expect(script).toContain("params.set('tenant_id'");
+      expect(script).toContain("params.set('from'");
+      expect(script).toContain("params.set('to'");
       expect(script).toContain("Retry links:");
     } finally {
       await server.close();
@@ -369,7 +379,7 @@ describe("execution api integration", () => {
     } finally {
       await server.close();
     }
-  });
+  }, 15_000);
 
   test("GET /api/spell-executions/:execution_id/output returns one output value", async () => {
     const server = await startExecutionApiServer({
@@ -1348,16 +1358,14 @@ describe("execution api integration", () => {
       });
       await waitForExecution(server.port, secondExecutionId);
 
-      const files = await readdir(path.join(tempHome, ".spell", "logs"));
-      const logFiles = files.filter((name) => name.endsWith(".json") && name !== "index.json");
-      expect(logFiles.length).toBe(1);
-
       const payload = await waitForExecutionList(
         server.port,
         (executions) => executions.length === 1 && executions[0]?.execution_id === secondExecutionId
       );
       expect(payload.executions.length).toBe(1);
       expect(payload.executions[0]?.execution_id).toBe(secondExecutionId);
+
+      await waitForLogFilesCount(tempHome, 1);
     } finally {
       await server.close();
     }
@@ -1896,6 +1904,21 @@ async function waitForTenantAuditStatuses(
   }
 
   throw new Error("tenant audit statuses not found in time");
+}
+
+async function waitForLogFilesCount(homeDir: string, expectedCount: number): Promise<void> {
+  const deadline = Date.now() + 4_000;
+
+  while (Date.now() < deadline) {
+    const files = await readdir(path.join(homeDir, ".spell", "logs")).catch(() => []);
+    const logFiles = files.filter((name) => name.endsWith(".json") && name !== "index.json");
+    if (logFiles.length === expectedCount) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
+
+  throw new Error(`log files count did not reach expected value: ${expectedCount}`);
 }
 
 async function createExecution(

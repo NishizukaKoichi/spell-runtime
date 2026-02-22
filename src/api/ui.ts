@@ -148,6 +148,28 @@ export function renderReceiptsHtml(): string {
           <label>limit</label>
           <input id="executionLimit" type="text" value="20" />
         </div>
+        <div style="flex:1; min-width:220px">
+          <label>button_id filter</label>
+          <input id="executionButtonId" type="text" placeholder="publish_site_high_risk" />
+        </div>
+      </div>
+      <div class="row" style="margin-bottom:10px">
+        <div style="flex:1; min-width:220px">
+          <label>spell_id filter</label>
+          <input id="executionSpellId" type="text" placeholder="samples/publish-site" />
+        </div>
+        <div style="flex:1; min-width:180px">
+          <label>tenant_id filter</label>
+          <input id="executionTenantId" type="text" placeholder="team_a" />
+        </div>
+        <div style="flex:1; min-width:220px">
+          <label>from (ISO-8601)</label>
+          <input id="executionFrom" type="text" placeholder="2026-01-01T00:00:00.000Z" />
+        </div>
+        <div style="flex:1; min-width:220px">
+          <label>to (ISO-8601)</label>
+          <input id="executionTo" type="text" placeholder="2026-01-31T23:59:59.999Z" />
+        </div>
       </div>
       <div id="executions"></div>
     </section>
@@ -235,6 +257,11 @@ export function renderReceiptsClientJs(): string {
     '  tenantHint: document.getElementById("tenantHint"),',
     '  executionStatus: document.getElementById("executionStatus"),',
     '  executionLimit: document.getElementById("executionLimit"),',
+    '  executionButtonId: document.getElementById("executionButtonId"),',
+    '  executionSpellId: document.getElementById("executionSpellId"),',
+    '  executionTenantId: document.getElementById("executionTenantId"),',
+    '  executionFrom: document.getElementById("executionFrom"),',
+    '  executionTo: document.getElementById("executionTo"),',
     '  apiToken: document.getElementById("apiToken")',
     "};",
     "",
@@ -243,6 +270,11 @@ export function renderReceiptsClientJs(): string {
     'document.getElementById("clearSelection").addEventListener("click", clearSelection);',
     "el.executionStatus.addEventListener('change', loadExecutions);",
     "el.executionLimit.addEventListener('change', loadExecutions);",
+    "el.executionButtonId.addEventListener('change', loadExecutions);",
+    "el.executionSpellId.addEventListener('change', loadExecutions);",
+    "el.executionTenantId.addEventListener('change', loadExecutions);",
+    "el.executionFrom.addEventListener('change', loadExecutions);",
+    "el.executionTo.addEventListener('change', loadExecutions);",
     "el.apiToken.addEventListener('change', () => { stopExecutionStream(); stopListStream(); loadButtons(); loadExecutions(); });",
     "el.runForm.addEventListener('submit', submitExecution);",
     "",
@@ -398,6 +430,31 @@ export function renderReceiptsClientJs(): string {
     "  const selectedStatus = String(el.executionStatus.value || '').trim();",
     "  if (selectedStatus !== '') {",
     "    params.set('status', selectedStatus);",
+    "  }",
+    "",
+    "  const buttonIdFilter = String(el.executionButtonId.value || '').trim();",
+    "  if (buttonIdFilter !== '') {",
+    "    params.set('button_id', buttonIdFilter);",
+    "  }",
+    "",
+    "  const spellIdFilter = String(el.executionSpellId.value || '').trim();",
+    "  if (spellIdFilter !== '') {",
+    "    params.set('spell_id', spellIdFilter);",
+    "  }",
+    "",
+    "  const tenantIdFilter = String(el.executionTenantId.value || '').trim();",
+    "  if (tenantIdFilter !== '') {",
+    "    params.set('tenant_id', tenantIdFilter);",
+    "  }",
+    "",
+    "  const fromFilter = String(el.executionFrom.value || '').trim();",
+    "  if (fromFilter !== '') {",
+    "    params.set('from', fromFilter);",
+    "  }",
+    "",
+    "  const toFilter = String(el.executionTo.value || '').trim();",
+    "  if (toFilter !== '') {",
+    "    params.set('to', toFilter);",
     "  }",
     "",
     "  const parsedLimit = Number.parseInt(String(el.executionLimit.value || '').trim(), 10);",

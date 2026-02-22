@@ -530,6 +530,7 @@ Security note:
 - GET /api/spell-executions/events streams filtered execution list snapshots (snapshot + executions)
 - GET /api/spell-executions/:execution_id/events streams server-sent events and closes after terminal status (succeeded/failed/timeout/canceled)
 - Receipts UI uses list SSE for execution list and detail SSE for selected execution while status is queued/running
+- Receipts UI exposes list filters for status, button_id, spell_id, tenant_id, limit, from, to
 - when auth is enabled, pass Authorization: Bearer <token> (or x-api-key) for /api routes
 - with SPELL_API_AUTH_KEYS, non-admin list requests are restricted to their own tenant and cross-tenant tenant_id filters return 403 (TENANT_FORBIDDEN)
 - with SPELL_API_AUTH_KEYS, non-admin cancel requests are restricted to their own tenant (403 TENANT_FORBIDDEN for cross-tenant)

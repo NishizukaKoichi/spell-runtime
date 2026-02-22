@@ -274,6 +274,7 @@ Map common stderr messages from runtime to stable API error codes:
 - Button click opens confirmation dialog when guard flags apply.
 - Show execution summary before final confirm (spell id/version, risk, billing, effects).
 - On success, show `execution_id` and link to detail view.
+- Execution list view supports filters: `status`, `button_id`, `spell_id`, `tenant_id`, `limit`, `from`, `to`.
 - For `failed`/`timeout`/`canceled` executions, show a Retry action that calls `POST /api/spell-executions/:execution_id/retry`.
 - In detail view, show retry linkage (`retry_of` / `retried_by`) as navigable links.
 - On failure, show mapped message and a troubleshooting hint.
