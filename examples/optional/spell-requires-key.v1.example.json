@@ -1,0 +1,25 @@
+{
+  "version": "v1",
+  "tenants": {
+    "default": {
+      "connectors": {
+        "github": {
+          "token": "ghp_replace_me",
+          "scopes": ["repo"]
+        }
+      }
+    },
+    "team_a": {
+      "connectors": {
+        "cloudflare": {
+          "token": "cf_replace_me",
+          "scopes": ["workers.write"]
+        },
+        "vercel": {
+          "token": "vercel_replace_me",
+          "scopes": ["deployments.write"]
+        }
+      }
+    }
+  }
+}

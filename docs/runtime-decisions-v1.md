@@ -199,3 +199,10 @@ v1 intentionally excludes:
 - supports exact id, id-prefix, latest-only, and limit filtering for operator browsing.
 - output is deterministic: sorted by `id` ascending, then `version` descending (semver-aware).
 - this feature is read-only discovery; install path remains `spell install registry:<id>@<version|latest>`.
+
+## 27. Runtime boundary for optional platform services
+- optional sidecars are implemented as separate APIs and are not required for runtime execution:
+  - Spell requires Key (`src/optional/key-server.ts`)
+  - Spell Market (`src/optional/market-server.ts`)
+  - Billing Entitlement Issuer (`src/optional/billing-server.ts`)
+- this keeps `spell` runtime portable while allowing operators to provide hosted key/discovery/billing services.

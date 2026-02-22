@@ -620,3 +620,23 @@ Security note:
 - with `SPELL_API_AUTH_KEYS`, non-admin stream requests are restricted to their own tenant (`403 TENANT_FORBIDDEN` for cross-tenant)
 - with `SPELL_API_AUTH_KEYS`, `GET /api/tenants/:tenant_id/usage` requires an `admin` key
 - do not set both `SPELL_API_AUTH_KEYS` and `SPELL_API_AUTH_TOKENS` at the same time
+
+## Optional External Services (Out of Runtime Scope)
+
+These sidecars are optional and intended for operators who want hosted key management, discovery UX, or entitlement issuing around `spell-runtime`.
+
+- Spell requires Key (connector token broker):
+  - `npm run optional:key:dev`
+  - `POST /v1/resolve-token` with body `{ "tenant_id": "team_a", "connector": "github" }`
+  - reads `SPELL_REQUIRES_KEY_STORE_PATH` (default `~/.spell/spell-requires-key.v1.json`)
+- Spell Market (catalog discovery API):
+  - `npm run optional:market:dev`
+  - `GET /v1/spells?query=deploy&latest=true&limit=20`
+  - `GET /v1/spells/<id>/versions`
+  - reads `SPELL_MARKET_CATALOG_PATH` (default `~/.spell/market/catalog.v1.json`)
+- Billing Entitlement Issuer (signed `ent1` tokens):
+  - `npm run optional:billing:dev`
+  - `POST /v1/entitlements/issue` with body `{ "mode": "on_success", "currency": "USD", "max_amount": 25, "ttl_seconds": 3600 }`
+  - requires `SPELL_BILLING_ISSUER` and private key file (`SPELL_BILLING_PRIVATE_KEY_PATH`)
+
+See `/Users/koichinishizuka/spell-runtime/docs/optional-services.md` for JSON formats and env vars.

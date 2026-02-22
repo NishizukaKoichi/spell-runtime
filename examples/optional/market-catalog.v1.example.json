@@ -1,0 +1,35 @@
+{
+  "version": "v1",
+  "spells": [
+    {
+      "id": "samples/call-webhook",
+      "version": "1.0.0",
+      "name": "Call Webhook",
+      "summary": "Send webhook for deploy notifications",
+      "publisher": "samples",
+      "risk": "low",
+      "source": "registry:samples/call-webhook@1.0.0",
+      "tags": ["webhook", "http", "notify"]
+    },
+    {
+      "id": "samples/repo-ops",
+      "version": "1.0.0",
+      "name": "Repo Ops",
+      "summary": "Repository operations with connector guard",
+      "publisher": "samples",
+      "risk": "medium",
+      "source": "registry:samples/repo-ops@1.0.0",
+      "tags": ["repo", "git"]
+    },
+    {
+      "id": "samples/publish-site",
+      "version": "1.0.0",
+      "name": "Publish Site",
+      "summary": "Build and publish static site",
+      "publisher": "samples",
+      "risk": "high",
+      "source": "registry:samples/publish-site@1.0.0",
+      "tags": ["deploy", "site"]
+    }
+  ]
+}
