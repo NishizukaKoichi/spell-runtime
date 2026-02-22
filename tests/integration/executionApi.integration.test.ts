@@ -301,6 +301,71 @@ describe("execution api integration", () => {
     }
   });
 
+  test("GET /api/spell-executions/:execution_id/events streams execution updates until terminal", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json")
+    });
+
+    try {
+      const executionId = await createExecution(server.port, {
+        button_id: "publish_site_high_risk",
+        actor_role: "admin",
+        confirmation: { risk_acknowledged: true }
+      });
+
+      const streamResponse = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions/${executionId}/events`, {
+        signal: AbortSignal.timeout(8_000)
+      });
+      expect(streamResponse.status).toBe(200);
+      expect(String(streamResponse.headers.get("content-type") ?? "")).toContain("text/event-stream");
+
+      const streamBody = await streamResponse.text();
+      const events = parseSseEvents(streamBody);
+      expect(events.some((event) => event.event === "snapshot")).toBe(true);
+      expect(events.some((event) => event.event === "terminal")).toBe(true);
+
+      const terminal = [...events].reverse().find((event) => event.event === "terminal");
+      const terminalPayload = (terminal?.data ?? {}) as { execution?: { status?: string } };
+      const status = String(terminalPayload.execution?.status ?? "");
+      expect(["succeeded", "failed", "timeout", "canceled"]).toContain(status);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("GET /api/spell-executions/:execution_id/events forbids non-admin cross-tenant stream with auth keys", async () => {
+    const server = await startExecutionApiServer({
+      port: 0,
+      registryPath: path.join(process.cwd(), "examples/button-registry.v1.json"),
+      authKeys: ["team_a:operator=team-a-op-token", "team_b:operator=team-b-op-token"]
+    });
+
+    try {
+      const created = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions`, {
+        method: "POST",
+        headers: { authorization: "Bearer team-b-op-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          button_id: "call_webhook_demo",
+          actor_role: "admin",
+          dry_run: true
+        })
+      });
+      expect(created.status).toBe(202);
+      const createdPayload = (await created.json()) as Record<string, unknown>;
+      const executionId = String(createdPayload.execution_id);
+
+      const forbidden = await fetch(`http://127.0.0.1:${server.port}/api/spell-executions/${executionId}/events`, {
+        headers: { authorization: "Bearer team-a-op-token" }
+      });
+      expect(forbidden.status).toBe(403);
+      const forbiddenPayload = (await forbidden.json()) as Record<string, unknown>;
+      expect(forbiddenPayload.error_code).toBe("TENANT_FORBIDDEN");
+    } finally {
+      await server.close();
+    }
+  });
+
   test("POST /api/spell-executions/:execution_id/cancel cancels queued executions", async () => {
     const server = await startExecutionApiServer({
       port: 0,
@@ -1737,6 +1802,47 @@ async function createExecution(
   expect(response.status).toBe(202);
   const payload = (await response.json()) as Record<string, unknown>;
   return String(payload.execution_id);
+}
+
+function parseSseEvents(raw: string): Array<{ event: string; data: unknown }> {
+  const blocks = raw
+    .split(/\r?\n\r?\n/)
+    .map((block) => block.trim())
+    .filter((block) => block.length > 0);
+  const events: Array<{ event: string; data: unknown }> = [];
+
+  for (const block of blocks) {
+    const lines = block.split(/\r?\n/);
+    let event = "message";
+    const dataLines: string[] = [];
+    for (const line of lines) {
+      if (line.startsWith(":")) {
+        continue;
+      }
+      if (line.startsWith("event:")) {
+        event = line.slice("event:".length).trim();
+        continue;
+      }
+      if (line.startsWith("data:")) {
+        dataLines.push(line.slice("data:".length).trimStart());
+      }
+    }
+    if (dataLines.length === 0) {
+      continue;
+    }
+
+    const dataRaw = dataLines.join("\n");
+    let data: unknown = dataRaw;
+    try {
+      data = JSON.parse(dataRaw) as unknown;
+    } catch {
+      // keep string payload for non-json data frames.
+    }
+
+    events.push({ event, data });
+  }
+
+  return events;
 }
 
 async function createHostShellBundle(

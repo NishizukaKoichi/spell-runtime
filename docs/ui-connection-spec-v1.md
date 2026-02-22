@@ -62,6 +62,7 @@ See sample:
 - `GET /api/buttons`
 - `GET /api/spell-executions` (query: `status`, `button_id`, `spell_id`, `tenant_id`, `limit`, `from`, `to`)
 - `GET /api/spell-executions/:execution_id`
+- `GET /api/spell-executions/:execution_id/events` (SSE stream: `snapshot`/`execution`/`terminal`)
 - `GET /api/spell-executions/:execution_id/output?path=step.<name>.(stdout|json[.dot.path])`
 - `POST /api/spell-executions/:execution_id/cancel`
 - `POST /api/spell-executions/:execution_id/retry`
@@ -142,7 +143,19 @@ Execution status values:
 - `timeout`
 - `canceled`
 
-## 6.2.1 GET /api/spell-executions/:execution_id/output
+## 6.2.1 GET /api/spell-executions/:execution_id/events
+Streams execution updates as server-sent events.
+
+Event sequence:
+- `snapshot`: immediate current state
+- `execution`: sent when status/receipt changes
+- `terminal`: sent on terminal status, then connection closes
+
+Tenant/auth behavior:
+- follows same auth policy as other `/api` routes
+- with auth keys, non-admin cross-tenant stream requests return `403 TENANT_FORBIDDEN`
+
+## 6.2.2 GET /api/spell-executions/:execution_id/output
 Returns one resolved output value from the runtime log.
 
 Query:
@@ -295,6 +308,6 @@ return parseExecution(stdout);
 
 ## 14. Future Extension Hooks
 - Add queue/async job mode for long-running spells.
-- Add workflow status stream (SSE/WebSocket).
+- Add workflow status stream over WebSocket (SSE route is available).
 - Add runtime host pool routing by platform.
 - Add trust/sign key management UI flows for operator onboarding.

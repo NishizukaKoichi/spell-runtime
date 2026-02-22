@@ -573,6 +573,7 @@ By default it listens on `:8787` and reads:
 - `GET /api/spell-executions` (`status`, `button_id`, `spell_id`, `tenant_id`, `limit`, `from`, `to` query supported)
 - `POST /api/spell-executions` (supports optional `Idempotency-Key` header)
 - `GET /api/spell-executions/:execution_id`
+- `GET /api/spell-executions/:execution_id/events` (SSE stream: `snapshot` -> `execution` updates -> `terminal`)
 - `GET /api/spell-executions/:execution_id/output?path=step.<name>.(stdout|json[.dot.path])`
 - `POST /api/spell-executions/:execution_id/cancel`
 - `POST /api/spell-executions/:execution_id/retry`
@@ -605,9 +606,11 @@ Security note:
 - `POST /api/spell-executions/:execution_id/cancel` marks queued/running jobs as `canceled`; terminal states (`succeeded`/`failed`/`timeout`/`canceled`) return `409 ALREADY_TERMINAL`
 - `POST /api/spell-executions/:execution_id/retry` allows retrying only `failed`/`timeout`/`canceled` executions; other states return `409 NOT_RETRYABLE`
 - retry creates a new `execution_id` and links executions via `retry_of` (new execution) and `retried_by` (source execution); list/detail payloads include both fields
+- `GET /api/spell-executions/:execution_id/events` streams server-sent events and closes after terminal status (`succeeded`/`failed`/`timeout`/`canceled`)
 - when auth is enabled, pass `Authorization: Bearer <token>` (or `x-api-key`) for `/api` routes
 - with `SPELL_API_AUTH_KEYS`, non-admin list requests are restricted to their own tenant and cross-tenant `tenant_id` filters return `403` (`TENANT_FORBIDDEN`)
 - with `SPELL_API_AUTH_KEYS`, non-admin cancel requests are restricted to their own tenant (`403 TENANT_FORBIDDEN` for cross-tenant)
 - with `SPELL_API_AUTH_KEYS`, non-admin retry requests are restricted to their own tenant (`403 TENANT_FORBIDDEN` for cross-tenant)
+- with `SPELL_API_AUTH_KEYS`, non-admin stream requests are restricted to their own tenant (`403 TENANT_FORBIDDEN` for cross-tenant)
 - with `SPELL_API_AUTH_KEYS`, `GET /api/tenants/:tenant_id/usage` requires an `admin` key
 - do not set both `SPELL_API_AUTH_KEYS` and `SPELL_API_AUTH_TOKENS` at the same time

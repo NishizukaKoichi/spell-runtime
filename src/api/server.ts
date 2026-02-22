@@ -119,6 +119,8 @@ const DEFAULT_LIST_LIMIT = 100;
 const MAX_LIST_LIMIT = 500;
 const DEFAULT_LOG_RETENTION_DAYS = 14;
 const DEFAULT_LOG_MAX_FILES = 500;
+const STREAM_POLL_INTERVAL_MS = 150;
+const STREAM_HEARTBEAT_MS = 15_000;
 const DEFAULT_TENANT_ID = "default";
 const AUTH_KEY_SEGMENT_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 const IDEMPOTENCY_KEY_PRINTABLE_ASCII = /^[\x20-\x7E]+$/;
@@ -777,6 +779,138 @@ export async function startExecutionApiServer(
           }
           throw error;
         }
+      }
+
+      if (method === "GET" && route.startsWith("/spell-executions/") && route.endsWith("/events")) {
+        const matched = /^\/spell-executions\/([^/]+)\/events$/.exec(route);
+        const executionId = matched && matched[1] ? matched[1].trim() : "";
+        if (!executionId || !/^[a-zA-Z0-9_.-]+$/.test(executionId)) {
+          return sendJson(res, 400, { ok: false, error_code: "INVALID_EXECUTION_ID", message: "invalid execution id" });
+        }
+
+        const existing = jobs.get(executionId);
+        if (!existing) {
+          return sendJson(res, 404, { ok: false, error_code: "EXECUTION_NOT_FOUND", message: "execution not found" });
+        }
+
+        if (authKeys.length > 0 && authContext.ok && authContext.role !== "admin" && authContext.tenantId !== existing.tenant_id) {
+          return sendJson(res, 403, {
+            ok: false,
+            error_code: "TENANT_FORBIDDEN",
+            message: `tenant stream denied: ${existing.tenant_id}`
+          });
+        }
+
+        res.statusCode = 200;
+        res.setHeader("content-type", "text/event-stream; charset=utf-8");
+        res.setHeader("cache-control", "no-cache, no-transform");
+        res.setHeader("connection", "keep-alive");
+        res.setHeader("x-accel-buffering", "no");
+        res.flushHeaders?.();
+
+        let closed = false;
+        let lastSnapshot = "";
+        let pollTimer: NodeJS.Timeout | undefined;
+        let heartbeatTimer: NodeJS.Timeout | undefined;
+
+        const closeStream = (): void => {
+          if (closed) {
+            return;
+          }
+          closed = true;
+          if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = undefined;
+          }
+          if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = undefined;
+          }
+          if (!res.writableEnded) {
+            res.end();
+          }
+        };
+
+        const writeEvent = (eventName: string, payload: Record<string, unknown>): void => {
+          if (closed || res.writableEnded) {
+            return;
+          }
+          res.write(`event: ${eventName}\n`);
+          res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        };
+
+        const readSnapshot = (job: ExecutionJob): { execution: Record<string, unknown>; receipt: Record<string, unknown> | null } => {
+          return {
+            execution: summarizeJob(job),
+            receipt: job.receipt ?? null
+          };
+        };
+
+        const emitIfChanged = (eventName: string, job: ExecutionJob): boolean => {
+          const snapshot = readSnapshot(job);
+          const serialized = JSON.stringify(snapshot);
+          if (serialized === lastSnapshot) {
+            return false;
+          }
+          writeEvent(eventName, snapshot);
+          lastSnapshot = serialized;
+          return true;
+        };
+
+        const emitTerminalAndClose = (job: ExecutionJob): void => {
+          const snapshot = readSnapshot(job);
+          writeEvent("terminal", snapshot);
+          closeStream();
+        };
+
+        req.once("close", closeStream);
+        req.once("aborted", closeStream);
+
+        const current = jobs.get(executionId);
+        if (!current) {
+          writeEvent("terminal", {
+            execution_id: executionId,
+            error_code: "EXECUTION_NOT_FOUND",
+            message: "execution not found"
+          });
+          return closeStream();
+        }
+
+        writeEvent("snapshot", readSnapshot(current));
+        lastSnapshot = JSON.stringify(readSnapshot(current));
+        if (isTerminalJobStatus(current.status)) {
+          emitTerminalAndClose(current);
+          return;
+        }
+
+        pollTimer = setInterval(() => {
+          if (closed) {
+            return;
+          }
+          const latest = jobs.get(executionId);
+          if (!latest) {
+            writeEvent("terminal", {
+              execution_id: executionId,
+              error_code: "EXECUTION_NOT_FOUND",
+              message: "execution not found"
+            });
+            closeStream();
+            return;
+          }
+          emitIfChanged("execution", latest);
+          if (isTerminalJobStatus(latest.status)) {
+            emitTerminalAndClose(latest);
+          }
+        }, STREAM_POLL_INTERVAL_MS);
+
+        heartbeatTimer = setInterval(() => {
+          if (closed || res.writableEnded) {
+            return;
+          }
+          res.write(": ping\n\n");
+        }, STREAM_HEARTBEAT_MS);
+
+        return;
       }
 
       if (method === "GET" && route.startsWith("/spell-executions/")) {

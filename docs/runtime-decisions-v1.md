@@ -180,3 +180,12 @@ v1 intentionally excludes:
 - retry is applied to step execution failures before the step is treated as failed.
 - when a step succeeds after retries, step result message includes attempt marker (`attempt n/m`).
 - final failure after retries appends attempt marker to error message (`attempt m/m`).
+
+## 25. Execution status stream (SSE)
+- execution API exposes `GET /api/spell-executions/:execution_id/events` as server-sent events.
+- stream sends:
+  - `snapshot`: immediate current execution snapshot
+  - `execution`: delta snapshots when status/receipt changes
+  - `terminal`: final snapshot, then stream closes
+- stream is tenant-scoped under auth keys:
+  - non-admin cross-tenant requests fail with `TENANT_FORBIDDEN`.
