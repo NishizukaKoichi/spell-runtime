@@ -1,7 +1,7 @@
 import { access, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { load } from "js-yaml";
-import { SpellBundleManifest, SpellCheck, SpellStep, SpellStepCondition } from "../types";
+import { SpellBundleManifest, SpellCheck, SpellStep, SpellStepCondition, SpellStepRetry } from "../types";
 import { SpellError } from "../util/errors";
 
 const RISK_VALUES = new Set(["low", "medium", "high", "critical"]);
@@ -194,6 +194,7 @@ function parseSteps(rawSteps: unknown[]): SpellStep[] {
 
     const run = readRequiredString(obj, "run");
     const rollback = parseOptionalString(obj["rollback"], `steps[${idx}].rollback`);
+    const retry = parseOptionalStepRetry(obj["retry"], `steps[${idx}].retry`);
     const dependsOn = parseOptionalStringArray(obj["depends_on"], `steps[${idx}].depends_on`);
     const when = parseOptionalStepCondition(obj["when"], `steps[${idx}].when`);
 
@@ -202,6 +203,7 @@ function parseSteps(rawSteps: unknown[]): SpellStep[] {
       name,
       run,
       rollback,
+      retry,
       depends_on: dependsOn,
       when
     };
@@ -340,6 +342,41 @@ function parseOptionalStepCondition(raw: unknown, label: string): SpellStepCondi
     output_path: hasOutputPath ? (outputPath as string).trim() : undefined,
     equals: hasEquals ? condition["equals"] : undefined,
     not_equals: hasNotEquals ? condition["not_equals"] : undefined
+  };
+}
+
+function parseOptionalStepRetry(raw: unknown, label: string): SpellStepRetry | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new SpellError(`${label} must be an object`);
+  }
+
+  const retry = raw as Record<string, unknown>;
+  const allowedKeys = new Set(["max_attempts", "backoff_ms"]);
+  for (const key of Object.keys(retry)) {
+    if (!allowedKeys.has(key)) {
+      throw new SpellError(`${label}.${key} is not supported`);
+    }
+  }
+
+  const maxAttempts = retry["max_attempts"];
+  if (typeof maxAttempts !== "number" || !Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 10) {
+    throw new SpellError(`${label}.max_attempts must be an integer between 1 and 10`);
+  }
+
+  const backoffMsRaw = retry["backoff_ms"];
+  if (backoffMsRaw !== undefined) {
+    if (typeof backoffMsRaw !== "number" || !Number.isInteger(backoffMsRaw) || backoffMsRaw < 0 || backoffMsRaw > 60_000) {
+      throw new SpellError(`${label}.backoff_ms must be an integer between 0 and 60000`);
+    }
+  }
+
+  return {
+    max_attempts: maxAttempts,
+    backoff_ms: backoffMsRaw as number | undefined
   };
 }
 

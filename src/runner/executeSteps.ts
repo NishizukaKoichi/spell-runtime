@@ -171,17 +171,19 @@ async function runStepWithCondition(
   }
 
   const runPath = path.resolve(bundlePath, step.run);
-  const remainingExecutionMs = executionDeadlineMs !== undefined ? executionDeadlineMs - Date.now() : undefined;
-
-  if (remainingExecutionMs !== undefined && remainingExecutionMs <= 0) {
-    throw new SpellError(formatExecutionTimeoutMessage(executionTimeoutMs as number, step.name));
-  }
+  const retry = normalizeStepRetry(step);
 
   if (step.uses === "shell") {
-    const result = await shellRunner(step, runPath, bundlePath, env, {
-      maxDurationMs: remainingExecutionMs,
-      executionTimeoutMs
-    });
+    const result = await runShellStepWithRetry(
+      step,
+      runPath,
+      bundlePath,
+      env,
+      executionDeadlineMs,
+      executionTimeoutMs,
+      retry,
+      shellRunner
+    );
     return {
       stepName: step.name,
       stepResult: result.stepResult,
@@ -192,7 +194,16 @@ async function runStepWithCondition(
   }
 
   if (step.uses === "http") {
-    const result = await runHttpStepWithExecutionTimeout(step, runPath, input, env, remainingExecutionMs, executionTimeoutMs, httpRunner);
+    const result = await runHttpStepWithRetry(
+      step,
+      runPath,
+      input,
+      env,
+      executionDeadlineMs,
+      executionTimeoutMs,
+      retry,
+      httpRunner
+    );
     return {
       stepName: step.name,
       stepResult: result.stepResult,
@@ -241,6 +252,141 @@ export function shouldRunStep(
   }
 
   return true;
+}
+
+interface NormalizedStepRetry {
+  maxAttempts: number;
+  backoffMs: number;
+}
+
+function normalizeStepRetry(step: SpellStep): NormalizedStepRetry {
+  return {
+    maxAttempts: step.retry?.max_attempts ?? 1,
+    backoffMs: step.retry?.backoff_ms ?? 0
+  };
+}
+
+async function runShellStepWithRetry(
+  step: SpellStep,
+  runPath: string,
+  bundlePath: string,
+  env: NodeJS.ProcessEnv,
+  executionDeadlineMs: number | undefined,
+  executionTimeoutMs: number | undefined,
+  retry: NormalizedStepRetry,
+  shellRunner: ShellRunner
+): Promise<ShellStepExecution> {
+  for (let attempt = 1; attempt <= retry.maxAttempts; attempt += 1) {
+    const remainingExecutionMs = executionDeadlineMs !== undefined ? executionDeadlineMs - Date.now() : undefined;
+    if (remainingExecutionMs !== undefined && remainingExecutionMs <= 0) {
+      throw new SpellError(formatExecutionTimeoutMessage(executionTimeoutMs as number, step.name));
+    }
+
+    try {
+      const result = await shellRunner(step, runPath, bundlePath, env, {
+        maxDurationMs: remainingExecutionMs,
+        executionTimeoutMs
+      });
+      return {
+        ...result,
+        stepResult: annotateSuccessfulAttempt(result.stepResult, attempt, retry.maxAttempts)
+      };
+    } catch (error) {
+      if (attempt >= retry.maxAttempts) {
+        throw toRetryError(error, attempt, retry.maxAttempts);
+      }
+      await waitForRetryBackoff(step.name, retry.backoffMs, executionDeadlineMs, executionTimeoutMs);
+    }
+  }
+
+  throw new SpellError(`step failed: ${step.name}`);
+}
+
+async function runHttpStepWithRetry(
+  step: SpellStep,
+  runPath: string,
+  input: Record<string, unknown>,
+  env: NodeJS.ProcessEnv,
+  executionDeadlineMs: number | undefined,
+  executionTimeoutMs: number | undefined,
+  retry: NormalizedStepRetry,
+  httpRunner: HttpRunner
+): Promise<HttpStepExecution> {
+  for (let attempt = 1; attempt <= retry.maxAttempts; attempt += 1) {
+    const remainingExecutionMs = executionDeadlineMs !== undefined ? executionDeadlineMs - Date.now() : undefined;
+    if (remainingExecutionMs !== undefined && remainingExecutionMs <= 0) {
+      throw new SpellError(formatExecutionTimeoutMessage(executionTimeoutMs as number, step.name));
+    }
+
+    try {
+      const result = await runHttpStepWithExecutionTimeout(
+        step,
+        runPath,
+        input,
+        env,
+        remainingExecutionMs,
+        executionTimeoutMs,
+        httpRunner
+      );
+      return {
+        ...result,
+        stepResult: annotateSuccessfulAttempt(result.stepResult, attempt, retry.maxAttempts)
+      };
+    } catch (error) {
+      if (attempt >= retry.maxAttempts) {
+        throw toRetryError(error, attempt, retry.maxAttempts);
+      }
+      await waitForRetryBackoff(step.name, retry.backoffMs, executionDeadlineMs, executionTimeoutMs);
+    }
+  }
+
+  throw new SpellError(`step failed: ${step.name}`);
+}
+
+function annotateSuccessfulAttempt(stepResult: StepResult, attempt: number, maxAttempts: number): StepResult {
+  if (maxAttempts <= 1) {
+    return stepResult;
+  }
+
+  const baseMessage = stepResult.message ?? "ok";
+  return {
+    ...stepResult,
+    message: `${baseMessage} (attempt ${attempt}/${maxAttempts})`
+  };
+}
+
+function toRetryError(error: unknown, attempt: number, maxAttempts: number): SpellError {
+  if (error instanceof SpellError && maxAttempts <= 1) {
+    return error;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (maxAttempts <= 1 || message.includes(`attempt ${attempt}/${maxAttempts}`)) {
+    return new SpellError(message);
+  }
+
+  return new SpellError(`${message} (attempt ${attempt}/${maxAttempts})`);
+}
+
+async function waitForRetryBackoff(
+  stepName: string,
+  backoffMs: number,
+  executionDeadlineMs: number | undefined,
+  executionTimeoutMs: number | undefined
+): Promise<void> {
+  if (backoffMs <= 0) {
+    return;
+  }
+
+  if (executionDeadlineMs !== undefined) {
+    const remaining = executionDeadlineMs - Date.now();
+    if (remaining <= 0 || remaining < backoffMs) {
+      throw new SpellError(formatExecutionTimeoutMessage(executionTimeoutMs as number, stepName));
+    }
+  }
+
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, backoffMs);
+  });
 }
 
 async function runHttpStepWithExecutionTimeout(

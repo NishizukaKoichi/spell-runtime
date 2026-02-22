@@ -1199,6 +1199,55 @@ describe("spell cli integration", () => {
     }
   });
 
+  test("step retry retries shell failure and then succeeds", async () => {
+    const bundleDir = await createHostShellBundle("tests/retry-shell", [
+      {
+        name: "flaky",
+        fileName: "flaky.js",
+        source: [
+          "#!/usr/bin/env node",
+          "const fs = require('node:fs');",
+          "const marker = '.flaky-attempt';",
+          "const previous = fs.existsSync(marker) ? Number(fs.readFileSync(marker, 'utf8')) : 0;",
+          "const current = previous + 1;",
+          "fs.writeFileSync(marker, String(current));",
+          "if (current < 2) {",
+          "  process.stderr.write('flaky failure\\n');",
+          "  process.exit(1);",
+          "}",
+          "console.log('ok-after-retry');"
+        ].join("\n"),
+        retryMaxAttempts: 3,
+        retryBackoffMs: 0
+      }
+    ]);
+
+    try {
+      expect(await runCli(["node", "spell", "install", bundleDir])).toBe(0);
+      const result = await runCliCapture([
+        "node",
+        "spell",
+        "cast",
+        "tests/retry-shell",
+        "--allow-unsigned",
+        "-p",
+        "name=demo"
+      ]);
+      expect(result.code).toBe(0);
+
+      const logsDir = path.join(tempHome, ".spell", "logs");
+      const logs = (await readdir(logsDir)).sort();
+      const lastLog = logs[logs.length - 1];
+      const payload = JSON.parse(await readFile(path.join(logsDir, lastLog), "utf8")) as Record<string, unknown>;
+      const steps = payload.steps as Array<Record<string, unknown>>;
+      const flakyStep = steps.find((entry) => entry.stepName === "flaky");
+      expect(flakyStep?.success).toBe(true);
+      expect(String(flakyStep?.message ?? "")).toContain("attempt 2/3");
+    } finally {
+      await rm(bundleDir, { recursive: true, force: true });
+    }
+  });
+
   test("permissions guard blocks without connector token", async () => {
     const fixture = path.join(process.cwd(), "fixtures/spells/permissions-guard");
     expect(await runCli(["node", "spell", "install", fixture])).toBe(0);
@@ -2076,6 +2125,8 @@ async function createHostShellBundle(
     fileName: string;
     source: string;
     dependsOn?: string[];
+    retryMaxAttempts?: number;
+    retryBackoffMs?: number;
     rollbackFileName?: string;
     rollbackSource?: string;
   }>
@@ -2144,6 +2195,13 @@ async function createHostShellBundle(
       manifestLines.push("    depends_on:");
       for (const dep of step.dependsOn) {
         manifestLines.push(`      - ${dep}`);
+      }
+    }
+    if (step.retryMaxAttempts !== undefined) {
+      manifestLines.push("    retry:");
+      manifestLines.push(`      max_attempts: ${step.retryMaxAttempts}`);
+      if (step.retryBackoffMs !== undefined) {
+        manifestLines.push(`      backoff_ms: ${step.retryBackoffMs}`);
       }
     }
     if (step.rollbackFileName) {

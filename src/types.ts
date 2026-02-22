@@ -35,11 +35,17 @@ export interface SpellStepCondition {
   not_equals?: unknown;
 }
 
+export interface SpellStepRetry {
+  max_attempts: number;
+  backoff_ms?: number;
+}
+
 export interface SpellStep {
   uses: StepUses;
   name: string;
   run: string;
   rollback?: string;
+  retry?: SpellStepRetry;
   depends_on?: string[];
   when?: SpellStepCondition;
 }

@@ -105,6 +105,43 @@ describe("loadManifestFromDir", () => {
 
     await expect(loadManifestFromDir(dir)).rejects.toThrow(/missing-rollback\.js/);
   });
+
+  test("parses valid retry config", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "spell-manifest-"));
+    await writeMinimalBundle(
+      dir,
+      [
+        "  - uses: shell",
+        "    name: first",
+        "    run: steps/first.js",
+        "    retry:",
+        "      max_attempts: 3",
+        "      backoff_ms: 250"
+      ].join("\n")
+    );
+
+    const loaded = await loadManifestFromDir(dir);
+    expect(loaded.manifest.steps[0]?.retry).toEqual({
+      max_attempts: 3,
+      backoff_ms: 250
+    });
+  });
+
+  test("fails on invalid retry.max_attempts", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "spell-manifest-"));
+    await writeMinimalBundle(
+      dir,
+      [
+        "  - uses: shell",
+        "    name: first",
+        "    run: steps/first.js",
+        "    retry:",
+        "      max_attempts: 0"
+      ].join("\n")
+    );
+
+    await expect(loadManifestFromDir(dir)).rejects.toThrow("steps[0].retry.max_attempts must be an integer between 1 and 10");
+  });
 });
 
 async function writeMinimalBundle(dir: string, stepsYamlBody: string): Promise<void> {

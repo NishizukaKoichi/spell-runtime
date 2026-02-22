@@ -315,6 +315,9 @@ Runtime now supports optional DAG + conditional step execution:
   - at least one of `equals` / `not_equals`
   - `output_path` format: `step.<name>.(stdout|json[.dot.path])`
   - when `output_path` is used, that source step must be listed in `depends_on`
+- `steps[].retry` (optional retry policy)
+  - `max_attempts` integer `1..10`
+  - `backoff_ms` integer `0..60000` (default `0`)
 - `steps[].rollback` (optional shell executable path run on failure)
 
 Example:
@@ -340,6 +343,7 @@ steps:
 Notes:
 - steps with false conditions are recorded as `success=true` with message `skipped by condition`
 - skipped steps do not emit `outputs[step.<name>.*]`
+- retry applies to step execution failures and records success message as `... (attempt n/m)` when retried
 - on step failure, configured rollback steps run in reverse execution order (`rollback.<stepName>`)
 - rollback failures are recorded, then the original step failure is returned
 - runtime log includes `rollback.state` (`not_needed`, `fully_compensated`, `partially_compensated`, `not_compensated`)

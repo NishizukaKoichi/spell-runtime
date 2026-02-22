@@ -172,3 +172,11 @@ v1 intentionally excludes:
   - final state (`not_needed`, `fully_compensated`, `partially_compensated`, `not_compensated`)
 - runtime policy supports `rollback.require_full_compensation`.
 - when enabled and rollback state is not fully compensated, cast reports `manual recovery required` and API maps it to `COMPENSATION_INCOMPLETE`.
+
+## 24. Step retry policy
+- steps may define optional retry policy via:
+  - `retry.max_attempts` (`1..10`)
+  - `retry.backoff_ms` (`0..60000`, default `0`)
+- retry is applied to step execution failures before the step is treated as failed.
+- when a step succeeds after retries, step result message includes attempt marker (`attempt n/m`).
+- final failure after retries appends attempt marker to error message (`attempt m/m`).

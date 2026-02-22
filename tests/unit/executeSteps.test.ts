@@ -80,6 +80,71 @@ describe("executeSteps", () => {
     expect(maxRunning).toBe(2);
   });
 
+  test("retries flaky step until success", async () => {
+    let attempts = 0;
+    const manifest = makeManifest([
+      {
+        uses: "shell",
+        name: "flaky",
+        run: "steps/flaky.js",
+        retry: {
+          max_attempts: 3,
+          backoff_ms: 0
+        }
+      }
+    ]);
+
+    const result = await executeSteps(manifest, "/tmp", {}, {}, {
+      shellRunner: async (step) => {
+        attempts += 1;
+        if (attempts < 2) {
+          throw new Error(`temporary failure on ${step.name}`);
+        }
+        return {
+          stepResult: okStepResult(step),
+          stdout: "ok",
+          stderr: ""
+        };
+      }
+    });
+
+    expect(attempts).toBe(2);
+    expect(result.outputs["step.flaky.stdout"]).toBe("ok");
+    expect(result.stepResults[0]?.message).toBe("ok (attempt 2/3)");
+  });
+
+  test("fails after max retry attempts", async () => {
+    let attempts = 0;
+    const manifest = makeManifest([
+      {
+        uses: "shell",
+        name: "always-fail",
+        run: "steps/always-fail.js",
+        retry: {
+          max_attempts: 2,
+          backoff_ms: 0
+        }
+      }
+    ]);
+
+    let caught: unknown;
+    try {
+      await executeSteps(manifest, "/tmp", {}, {}, {
+        shellRunner: async () => {
+          attempts += 1;
+          throw new Error("always failing");
+        }
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(attempts).toBe(2);
+    expect(caught).toBeInstanceOf(StepExecutionError);
+    const executionError = caught as StepExecutionError;
+    expect(executionError.message).toContain("attempt 2/2");
+  });
+
   test("runs rollback steps in reverse order after failure", async () => {
     const called: string[] = [];
     const manifest = makeManifest([
