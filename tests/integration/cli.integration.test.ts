@@ -317,6 +317,75 @@ describe("spell cli integration", () => {
     expect(result.stdout).toContain("commit\tBBCCDDEEFF00112233445566778899AABBCCDDEE");
   });
 
+  test("registry catalog prints entries and supports filters", async () => {
+    const indexUrl = "https://registry.test/spell-index.v1.json";
+    expect(await runCli(["node", "spell", "registry", "set", indexUrl])).toBe(0);
+
+    nock("https://registry.test").get("/spell-index.v1.json").times(3).reply(200, {
+      version: "v1",
+      spells: [
+        {
+          id: "fixtures/hello-host",
+          version: "1.0.0",
+          source: "https://spell.test/hello-host.git#v1.0.0"
+        },
+        {
+          id: "fixtures/hello-host",
+          version: "1.2.0",
+          source: "https://spell.test/hello-host.git#v1.2.0",
+          commit: "BBCCDDEEFF00112233445566778899AABBCCDDEE",
+          digest: "sha256:BBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AA"
+        },
+        {
+          id: "samples/repo-ops",
+          version: "1.0.0",
+          source: "https://spell.test/repo-ops.git#v1.0.0"
+        }
+      ]
+    });
+
+    const all = await runCliCapture(["node", "spell", "registry", "catalog"]);
+    expect(all.code).toBe(0);
+    expect(all.stdout).toContain("registry\tdefault\thttps://registry.test/spell-index.v1.json");
+    expect(all.stdout).toContain("id\tversion\tsource\tcommit\tdigest");
+    expect(all.stdout).toContain("fixtures/hello-host\t1.2.0\thttps://spell.test/hello-host.git#v1.2.0");
+    expect(all.stdout).toContain("samples/repo-ops\t1.0.0\thttps://spell.test/repo-ops.git#v1.0.0");
+
+    const latestFixtures = await runCliCapture([
+      "node",
+      "spell",
+      "registry",
+      "catalog",
+      "--latest",
+      "--id-prefix",
+      "fixtures/"
+    ]);
+    expect(latestFixtures.code).toBe(0);
+    expect(latestFixtures.stdout).toContain("fixtures/hello-host\t1.2.0");
+    expect(latestFixtures.stdout).not.toContain("fixtures/hello-host\t1.0.0");
+    expect(latestFixtures.stdout).not.toContain("samples/repo-ops");
+
+    const exactLimited = await runCliCapture([
+      "node",
+      "spell",
+      "registry",
+      "catalog",
+      "--id",
+      "fixtures/hello-host",
+      "--limit",
+      "1"
+    ]);
+    expect(exactLimited.code).toBe(0);
+    expect(exactLimited.stdout).toContain("fixtures/hello-host\t1.2.0");
+    expect(exactLimited.stdout).not.toContain("fixtures/hello-host\t1.0.0");
+  });
+
+  test("registry catalog rejects invalid --limit", async () => {
+    const result = await runCliCapture(["node", "spell", "registry", "catalog", "--limit", "0"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("--limit must be a positive integer");
+  });
+
   test("registry install fails when --registry name does not exist", async () => {
     expect(await runCli(["node", "spell", "registry", "set", "https://registry-primary.test/spell-index.v1.json"])).toBe(0);
 

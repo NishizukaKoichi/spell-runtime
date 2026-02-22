@@ -7,6 +7,7 @@ import {
   DEFAULT_REGISTRY_REQUIRED_PINS,
   addRegistryIndex,
   enforceRegistryRequiredPins,
+  listRegistryCatalog,
   parseRegistryIndexJson,
   parseRegistryInstallRef,
   readRegistryConfig,
@@ -336,6 +337,64 @@ describe("registry config lifecycle", () => {
         spellCount: 1
       }
     ]);
+  });
+
+  test("lists registry catalog with filters and latest-only option", async () => {
+    await setDefaultRegistryIndex("https://registry-primary.test/spell-index.v1.json");
+
+    const indexBody = {
+      version: "v1" as const,
+      spells: [
+        { id: "fixtures/hello-host", version: "1.0.0", source: "https://spell.test/hello-host.git#v1.0.0" },
+        { id: "fixtures/hello-host", version: "1.2.0", source: "https://spell.test/hello-host.git#v1.2.0" },
+        { id: "fixtures/alpha", version: "0.1.0", source: "https://spell.test/alpha.git#v0.1.0" },
+        { id: "samples/repo-ops", version: "1.0.0", source: "https://spell.test/repo-ops.git#v1.0.0" }
+      ]
+    };
+
+    nock("https://registry-primary.test").get("/spell-index.v1.json").times(4).reply(200, indexBody);
+
+    const all = await listRegistryCatalog(undefined);
+    expect(all.name).toBe("default");
+    expect(all.url).toBe("https://registry-primary.test/spell-index.v1.json");
+    expect(all.spells.map((entry) => `${entry.id}@${entry.version}`)).toEqual([
+      "fixtures/alpha@0.1.0",
+      "fixtures/hello-host@1.2.0",
+      "fixtures/hello-host@1.0.0",
+      "samples/repo-ops@1.0.0"
+    ]);
+
+    const latestOnly = await listRegistryCatalog(undefined, { latestOnly: true });
+    expect(latestOnly.spells.map((entry) => `${entry.id}@${entry.version}`)).toEqual([
+      "fixtures/alpha@0.1.0",
+      "fixtures/hello-host@1.2.0",
+      "samples/repo-ops@1.0.0"
+    ]);
+
+    const prefixFiltered = await listRegistryCatalog(undefined, { idPrefix: "fixtures/" });
+    expect(prefixFiltered.spells.map((entry) => entry.id)).toEqual([
+      "fixtures/alpha",
+      "fixtures/hello-host",
+      "fixtures/hello-host"
+    ]);
+
+    const limited = await listRegistryCatalog(undefined, { latestOnly: true, limit: 2 });
+    expect(limited.spells.map((entry) => `${entry.id}@${entry.version}`)).toEqual([
+      "fixtures/alpha@0.1.0",
+      "fixtures/hello-host@1.2.0"
+    ]);
+  });
+
+  test("rejects invalid registry catalog limit", async () => {
+    await setDefaultRegistryIndex("https://registry-primary.test/spell-index.v1.json");
+    nock("https://registry-primary.test").get("/spell-index.v1.json").reply(200, {
+      version: "v1",
+      spells: [{ id: "fixtures/hello-host", version: "1.0.0", source: "https://spell.test/hello-host.git#main" }]
+    });
+
+    await expect(listRegistryCatalog(undefined, { limit: 0 })).rejects.toThrow(
+      /registry catalog limit must be a positive integer/
+    );
   });
 
   test("resolveRegistryInstallSource can target a named index", async () => {

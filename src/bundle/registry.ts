@@ -3,7 +3,7 @@ import Ajv2020, { type AnySchema } from "ajv/dist/2020";
 import { SpellError } from "../util/errors";
 import { fetchHttp } from "../util/http";
 import { registryConfigPath, spellHome } from "../util/paths";
-import { selectLatestVersion } from "../util/version";
+import { compareVersionDesc, selectLatestVersion } from "../util/version";
 
 export interface RegistryIndexRef {
   name: string;
@@ -19,6 +19,20 @@ export interface RegistryValidationResult {
   name: string;
   url: string;
   spellCount: number;
+}
+
+export interface RegistryCatalogQuery {
+  id?: string;
+  idPrefix?: string;
+  latestOnly?: boolean;
+  limit?: number;
+}
+
+export interface RegistryCatalogResult {
+  name: string;
+  url: string;
+  spellCount: number;
+  spells: RegistrySpellEntry[];
 }
 
 export interface RegistrySpellEntry {
@@ -177,6 +191,23 @@ export async function validateRegistryIndexes(rawName?: string): Promise<Registr
   }
 
   return results;
+}
+
+export async function listRegistryCatalog(
+  rawName: string | undefined,
+  query: RegistryCatalogQuery = {}
+): Promise<RegistryCatalogResult> {
+  const config = await readRegistryConfig();
+  const selectedIndex = selectRegistryInstallIndex(config, rawName);
+  const index = await fetchRegistryIndex(selectedIndex.url);
+  const spells = filterRegistryCatalogSpells(index.spells, query);
+
+  return {
+    name: selectedIndex.name,
+    url: selectedIndex.url,
+    spellCount: spells.length,
+    spells
+  };
 }
 
 export async function readRegistryConfig(): Promise<RegistryConfigV1> {
@@ -381,6 +412,52 @@ async function fetchRegistryIndex(url: string): Promise<RegistryIndexV1> {
 
   const raw = await response.text();
   return parseRegistryIndexJson(raw, url);
+}
+
+function filterRegistryCatalogSpells(
+  spells: RegistrySpellEntry[],
+  query: RegistryCatalogQuery
+): RegistrySpellEntry[] {
+  const idFilter = query.id?.trim();
+  const idPrefixFilter = query.idPrefix?.trim();
+  const limit = query.limit;
+  if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
+    throw new SpellError("registry catalog limit must be a positive integer");
+  }
+
+  let filtered = spells.filter((entry) => {
+    if (idFilter && entry.id !== idFilter) {
+      return false;
+    }
+    if (idPrefixFilter && !entry.id.startsWith(idPrefixFilter)) {
+      return false;
+    }
+    return true;
+  });
+
+  filtered = [...filtered].sort((a, b) => {
+    const idOrder = a.id.localeCompare(b.id);
+    if (idOrder !== 0) {
+      return idOrder;
+    }
+    return compareVersionDesc(a.version, b.version);
+  });
+
+  if (query.latestOnly) {
+    const latestById = new Set<string>();
+    filtered = filtered.filter((entry) => {
+      if (latestById.has(entry.id)) {
+        return false;
+      }
+      latestById.add(entry.id);
+      return true;
+    });
+  }
+
+  if (limit !== undefined) {
+    return filtered.slice(0, limit);
+  }
+  return filtered;
 }
 
 function selectRegistryIndexes(config: RegistryConfigV1, rawName?: string): RegistryIndexRef[] {

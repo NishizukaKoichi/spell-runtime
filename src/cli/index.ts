@@ -6,6 +6,7 @@ import { Command } from "commander";
 import { installBundle } from "../bundle/install";
 import {
   addRegistryIndex,
+  listRegistryCatalog,
   resolveRegistryInstallSource,
   readRegistryConfigIfExists,
   removeRegistryIndex,
@@ -92,6 +93,53 @@ export async function runCli(argv: string[] = process.argv): Promise<number> {
         process.stdout.write(`${result.name}\t${result.url}\t${result.spellCount}\n`);
       }
     });
+
+  registry
+    .command("catalog")
+    .description("List spells from a registry index")
+    .option("--name <name>", "Registry index name (default: default)")
+    .option("--id <id>", "Exact spell id filter")
+    .option("--id-prefix <prefix>", "Spell id prefix filter")
+    .option("--latest", "Show only latest version per spell id", false)
+    .option("--limit <number>", "Maximum entries to print")
+    .action(
+      async (options: {
+        name?: string;
+        id?: string;
+        idPrefix?: string;
+        latest?: boolean;
+        limit?: string;
+      }) => {
+        let parsedLimit: number | undefined;
+        if (options.limit !== undefined) {
+          const raw = options.limit.trim();
+          if (!/^\d+$/.test(raw) || Number(raw) <= 0) {
+            throw new SpellError("--limit must be a positive integer");
+          }
+          parsedLimit = Number(raw);
+        }
+
+        const result = await listRegistryCatalog(options.name, {
+          id: options.id,
+          idPrefix: options.idPrefix,
+          latestOnly: options.latest === true,
+          limit: parsedLimit
+        });
+
+        process.stdout.write(`registry\t${result.name}\t${result.url}\n`);
+        if (result.spells.length === 0) {
+          process.stdout.write("No registry spells\n");
+          return;
+        }
+
+        process.stdout.write("id\tversion\tsource\tcommit\tdigest\n");
+        for (const spell of result.spells) {
+          process.stdout.write(
+            `${spell.id}\t${spell.version}\t${spell.source}\t${spell.commit ?? "-"}\t${spell.digest ?? "-"}\n`
+          );
+        }
+      }
+    );
 
   registry
     .command("resolve")

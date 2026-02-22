@@ -193,3 +193,9 @@ v1 intentionally excludes:
   - `snapshot`: initial list payload
   - `executions`: changed list payloads
   - uses same query filters/scoping as `GET /api/spell-executions`.
+
+## 26. Registry catalog browsing
+- CLI exposes `spell registry catalog` to list spell entries from a configured index.
+- supports exact id, id-prefix, latest-only, and limit filtering for operator browsing.
+- output is deterministic: sorted by `id` ascending, then `version` descending (semver-aware).
+- this feature is read-only discovery; install path remains `spell install registry:<id>@<version|latest>`.

@@ -37,6 +37,7 @@ Manual npx (local package):
 - spell registry add <name> <url>
 - spell registry remove <name>
 - spell registry validate [--name <name>]
+- spell registry catalog [--name <name>] [--id <id>] [--id-prefix <prefix>] [--latest] [--limit <number>]
 - spell registry resolve <source> [--name <name>]
 - spell policy show
 - spell policy validate --file <path>
@@ -111,6 +112,7 @@ Registry setup example:
   spell registry show
   spell registry validate
   spell registry validate --name mirror
+  spell registry catalog --latest --id-prefix fixtures/
   spell install registry:fixtures/hello-host@1.0.0
   spell install registry:fixtures/hello-host@1.0.0 --registry mirror
 
