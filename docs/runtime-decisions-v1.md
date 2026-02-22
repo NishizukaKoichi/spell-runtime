@@ -206,3 +206,19 @@ v1 intentionally excludes:
   - Spell Market (`src/optional/market-server.ts`)
   - Billing Entitlement Issuer (`src/optional/billing-server.ts`)
 - this keeps `spell` runtime portable while allowing operators to provide hosted key/discovery/billing services.
+
+## 28. Optional sidecar deployment baseline
+- repository includes compose-based deployment scaffolding for optional sidecars:
+  - `compose.optional-services.yml`
+  - `docker/runtime.Dockerfile`
+  - `env.optional.example`
+- deployment assets are intentionally isolated from runtime core behavior.
+- alternatives considered:
+  - fold sidecar behavior into runtime API process (rejected: increases blast radius and coupling)
+  - separate repository per sidecar (rejected for now: higher operational overhead at current scale)
+- risks:
+  - operators may treat optional sidecars as mandatory runtime dependencies
+  - env file misconfiguration can expose sidecar endpoints without auth
+- rollback:
+  - stop compose stack and remove optional sidecar env/config files
+  - runtime core (`spell`, `spell-runner`, execution API) remains unaffected

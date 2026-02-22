@@ -560,3 +560,4 @@ These sidecars are optional for operators who want hosted key management, discov
   - requires SPELL_BILLING_ISSUER and private key file (SPELL_BILLING_PRIVATE_KEY_PATH)
 
 See /Users/koichinishizuka/spell-runtime/docs/optional-services.md for JSON formats and env vars.
+See /Users/koichinishizuka/spell-runtime/docs/optional-services-deploy.md for Docker Compose deployment runbook.

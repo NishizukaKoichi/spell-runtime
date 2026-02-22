@@ -1,0 +1,50 @@
+name: spell-optional
+
+services:
+  runtime-api:
+    build:
+      context: .
+      dockerfile: docker/runtime.Dockerfile
+    command: ["node", "dist/api/index.js"]
+    env_file:
+      - .env.optional
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./.local-spell:/root/.spell
+
+  spell-requires-key:
+    build:
+      context: .
+      dockerfile: docker/runtime.Dockerfile
+    command: ["node", "dist/optional/key-server.js"]
+    env_file:
+      - .env.optional
+    ports:
+      - "8788:8788"
+    volumes:
+      - ./.local-spell:/root/.spell
+
+  spell-market:
+    build:
+      context: .
+      dockerfile: docker/runtime.Dockerfile
+    command: ["node", "dist/optional/market-server.js"]
+    env_file:
+      - .env.optional
+    ports:
+      - "8789:8789"
+    volumes:
+      - ./.local-spell:/root/.spell
+
+  spell-billing-issuer:
+    build:
+      context: .
+      dockerfile: docker/runtime.Dockerfile
+    command: ["node", "dist/optional/billing-server.js"]
+    env_file:
+      - .env.optional
+    ports:
+      - "8790:8790"
+    volumes:
+      - ./.local-spell:/root/.spell
