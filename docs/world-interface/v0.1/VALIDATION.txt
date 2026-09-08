@@ -1,0 +1,18 @@
+WIS v0.1 draft publication validation
+
+Command (from this directory): python tests/validate.py
+Result before publication: 23 tests passed.
+
+Scope: JSON Schema structures, 11 synthetic examples, OpenAPI internal references,
+separation of pocket money and token energy, selected quote constraints, a small
+single-process concurrent reservation model, and an in-memory idempotency model.
+
+Not tested or implemented: production runtime, durable distributed accounting,
+OAuth issuer or enforcement, signature verification, JCS canonicalization,
+real payments, end-to-end outage recovery, provider fulfillment or interoperability.
+OpenAPI 3.2 full meta-schema validation was not run. Repository application tests
+are separate from these draft tests and are not represented by this result.
+
+The original JSON data is published with whitespace compressed. SPEC-ja.md and
+tests/validate.py retain the source content. Placeholder domains, digests, dates,
+identifiers and monetary amounts are synthetic, not executable credentials.

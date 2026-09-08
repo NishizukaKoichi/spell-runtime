@@ -1,0 +1,1 @@
+{"report_id":"friction-01","visibility":"local","service_id":"https://vault.example/services/storage","capability_id":"storage.store","category":"redundant_roundtrip","occurrences":5,"redacted_example":"A status response omitted the receipt reference.","proposed_change":"Include the receipt reference in completed execution responses."}
