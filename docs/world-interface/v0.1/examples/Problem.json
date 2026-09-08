@@ -1,0 +1,1 @@
+{"type":"https://profiles.example/wis/errors/allowance-insufficient","title":"Insufficient pocket money for a new commitment","status":409,"code":"ALLOWANCE_INSUFFICIENT","retryable":false,"next_action":"fund_allowance"}
